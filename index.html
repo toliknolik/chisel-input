@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chisel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel&family=Fragment+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="scene">
+    <div id="slab">
+      <!-- Layer 1: Marble base gradient (#FCFAF8 → #F4F3F1) -->
+      <div class="marble-base"><img src="assets/marble/base.svg" alt=""></div>
+      <!-- Layer 2: Directional volume / lighting — rotated 60°, y-flipped, screen blend -->
+      <div class="marble-volume"><img src="assets/marble/volume.svg" alt=""></div>
+      <!-- Layer 2b: Chip edge stroke — same transform as volume, strokes the mask boundary -->
+      <div class="marble-chip-edge"></div>
+      <!-- Layer 3: Surface cracks — rotated −60°, normal blend -->
+      <div class="marble-cracks"><img src="assets/marble/cracks.svg" alt=""></div>
+      <!-- Layer 4–5: Organic veins — position/rotation set by JS, multiply blend -->
+      <div class="vein-wrap" id="vein-a"><img src="assets/marble/vein-a.svg" alt=""></div>
+      <div class="vein-wrap" id="vein-b"><img src="assets/marble/vein-b.svg" alt=""></div>
+      <!-- Text layer — position/width set by JS via computeSafeTextArea -->
+      <div id="text-layer">
+        <div id="carved-text"></div>
+        <span id="cursor"></span>
+      </div>
+    </div>
+
+    <div id="controls">
+      <button id="btn-destroy">[start again]</button>
+      <button id="btn-eternalize">[share]</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
