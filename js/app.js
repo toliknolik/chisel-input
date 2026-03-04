@@ -181,8 +181,8 @@ function applySlabShape(slab) {
   tl.style.webkitMaskImage = 'url(assets/marble/base.svg)';
   tl.style.maskImage       = 'url(assets/marble/base.svg)';
 
-  // Scale scene to fit viewport (slab + 32 px gap + ~40 px controls = +72 px)
-  const scaleH = (window.innerHeight - 32) / (slab.h * slab.sy + 72);
+  // Scale scene to fit viewport (slab + 8 px gap + ~40 px controls = +48 px)
+  const scaleH = (window.innerHeight - 32) / (slab.h * slab.sy + 48);
   const scaleW = (window.innerWidth  - 40) / (slab.w * slab.sx);
   const zoom   = Math.min(1, scaleH, scaleW);
   document.getElementById('scene').style.zoom = zoom;
