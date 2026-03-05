@@ -1,4 +1,7 @@
 import { SLABS } from './slabs.js';
+import { initParticles, resizeParticles, emitChiselDust, emitCrumble, clearParticles } from './particles.js';
+import { initCloud, triggerCrumbleCloud, triggerRevealCloud } from './cloud.js';
+import { initSidebar } from './sidebar.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -6,6 +9,10 @@ const DELAY_MIN  = 250;
 const DELAY_MAX  = 500;
 const MAX_CHARS  = 100;
 const VOL_SCALE  = 1.30;  // volume div = 130 % of slab (room for the chip mask)
+
+// Worst-case slab dimensions (max w/h across all slabs × max stretch 1.06)
+const MAX_SLAB_W = 508 * 1.06;  // 539
+const MAX_SLAB_H = 497 * 1.06;  // 527
 const CHIP_SCALE = 1.15;  // mask slab path scaled up → bigger chip, smaller chipped corners
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -20,13 +27,24 @@ let currentSafe  = null; // shape-aware text bounding box
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+function updateSceneZoom() {
+  const scaleH = (window.innerHeight - 32) / (MAX_SLAB_H + 48);
+  const scaleW = (window.innerWidth  - 40) / MAX_SLAB_W;
+  document.getElementById('scene').style.zoom = Math.min(1, scaleH, scaleW);
+}
+
 function init() {
+  initCloud();
+  initParticles();
+  updateSceneZoom();
+  window.addEventListener('resize', updateSceneZoom);
   currentSlab = pickSlab();
   applySlabShape(currentSlab);
   applyVeins(currentSlab);
   document.addEventListener('keydown', onKeyDown);
   document.getElementById('btn-destroy').addEventListener('click', destroySlab);
   document.getElementById('btn-eternalize').addEventListener('click', eternalize);
+  initSidebar();
 }
 
 // ── Slab setup ────────────────────────────────────────────────────────────────
@@ -57,9 +75,11 @@ function getPathBBoxCenter(slab) {
 }
 
 // Compute the largest inscribed safe-text rectangle for the given slab shape.
-// Rasterises the path at 20 % scale, scans middle-80 % of rows/cols for the
-// innermost filled edge on each side, then shrinks by `padding` px.
-function computeSafeTextArea(slab, padding) {
+// Rasterises the slab path intersected with the chip mask at 20 % scale,
+// scans middle-80 % of rows/cols for the innermost filled edge on each side,
+// then shrinks by `padding` px.  The chip parameter keeps text inside the
+// volume layer, away from the chipped corners.
+function computeSafeTextArea(slab, padding, chip) {
   const SC = 0.2;
   const cw = Math.ceil(slab.w * SC);
   const ch = Math.ceil(slab.h * SC);
@@ -68,6 +88,22 @@ function computeSafeTextArea(slab, padding) {
   const c2 = oc.getContext('2d');
   c2.scale(SC, SC);
   c2.fill(new Path2D(slab.path));
+
+  // Intersect with the chip/volume mask so text avoids chipped corners
+  if (chip) {
+    c2.globalCompositeOperation = 'destination-in';
+    c2.save();
+    c2.translate(chip.vcx, chip.vcy);
+    c2.rotate(chip.angle * Math.PI / 180);
+    c2.scale(1, -1);
+    c2.translate(-chip.volW / 2, -chip.volH / 2);
+    c2.translate(chip.maskX, chip.maskY);
+    c2.scale(CHIP_SCALE, CHIP_SCALE);
+    c2.fill(new Path2D(slab.path));
+    c2.restore();
+    c2.globalCompositeOperation = 'source-over';
+  }
+
   const d = c2.getImageData(0, 0, cw, ch).data;
 
   const yLo = Math.floor(ch * 0.10), yHi = Math.ceil(ch * 0.90);
@@ -114,7 +150,6 @@ function applySlabShape(slab) {
   slabRotation = (Math.random() * 0.4 - 0.2).toFixed(3); // ±0.2°
   const transform = `rotate(${slabRotation}deg) scale(${slab.sx.toFixed(4)}, ${slab.sy.toFixed(4)})`;
   el.style.transform = transform;
-  el.style.setProperty('--slab-transform', transform);
 
   // Rotate the volume layer around the slab path's bounding-box center (not the
   // element's geometric center) so the chip appears centered on the actual rock shape.
@@ -161,19 +196,22 @@ function applySlabShape(slab) {
   edge.style.backgroundRepeat   = 'no-repeat';
   edge.style.backgroundPosition = '0 0';
 
-  // Position text layer within the shape-aware safe area (20 px margin)
-  currentSafe = computeSafeTextArea(slab, 20);
+  // Position text layer within the shape-aware safe area (20 px margin).
+  // Pass chip geometry so text stays inside the volume layer, avoiding chipped corners.
+  const chip = { vcx, vcy, volW, volH, maskX, maskY, angle: slab.volumeAngle };
+  currentSafe = computeSafeTextArea(slab, 20, chip);
   const tl = document.getElementById('text-layer');
+  const safeTop = currentSafe.cy - currentSafe.h / 2;
   tl.style.left      = currentSafe.cx + 'px';
-  tl.style.top       = currentSafe.cy + 'px';
+  tl.style.top       = safeTop + 'px';
   tl.style.width     = currentSafe.w  + 'px';
-  tl.style.transform = 'translate(-50%, -50%)';
+  tl.style.transform = 'translateX(-50%)';
 
   // Mask the text through the marble base texture so it looks carved into stone.
   // The mask is the base.svg positioned to cover the full slab — the text layer's
-  // top-left offset relative to the slab is (cx − w/2, cy − h/2).
+  // top-left offset relative to the slab is (cx − w/2, safeTop).
   const maskOffX = -(currentSafe.cx - currentSafe.w  / 2);
-  const maskOffY = -(currentSafe.cy - currentSafe.h  / 2);
+  const maskOffY = -safeTop;
   el.style.setProperty('--slab-w',      slab.w + 'px');
   el.style.setProperty('--slab-h',      slab.h + 'px');
   tl.style.setProperty('--text-mask-x', maskOffX + 'px');
@@ -181,11 +219,9 @@ function applySlabShape(slab) {
   tl.style.webkitMaskImage = 'url(assets/marble/base.svg)';
   tl.style.maskImage       = 'url(assets/marble/base.svg)';
 
-  // Scale scene to fit viewport (slab + 8 px gap + ~40 px controls = +48 px)
-  const scaleH = (window.innerHeight - 32) / (slab.h * slab.sy + 48);
-  const scaleW = (window.innerWidth  - 40) / (slab.w * slab.sx);
-  const zoom   = Math.min(1, scaleH, scaleW);
-  document.getElementById('scene').style.zoom = zoom;
+  // Zoom is set once in init / on resize — not per-slab.
+
+  resizeParticles(slab);
 }
 
 // ── Vein overlays ─────────────────────────────────────────────────────────────
@@ -265,17 +301,20 @@ function carveCharacter(ch) {
   span.className   = 'letter';
   span.textContent = ch;
 
-  // Baseline wobble: ±2 px random vertical offset
-  const wobble = (Math.random() * 4 - 2).toFixed(1);
-  span.style.position = 'relative';
-  span.style.top      = wobble + 'px';
-
   // Slight letter-spacing variation: ±0.5 px
   const kern = (Math.random() * 1 - 0.5).toFixed(2);
   span.style.marginRight = kern + 'px';
 
   container.appendChild(span);
   charCount++;
+
+  // Emit chisel dust at the letter's position (slab-local coordinates)
+  const slabEl   = document.getElementById('slab');
+  const slabRect = slabEl.getBoundingClientRect();
+  const spanRect = span.getBoundingClientRect();
+  const lx = (spanRect.left + spanRect.width / 2 - slabRect.left) / slabRect.width  * currentSlab.w;
+  const ly = (spanRect.top  + spanRect.height / 2 - slabRect.top)  / slabRect.height * currentSlab.h;
+  emitChiselDust(lx, ly);
 
   requestAnimationFrame(() => requestAnimationFrame(() => {
     span.classList.add('emerged');
@@ -322,30 +361,178 @@ function playChisel() {
 
 // ── Destroy slab ──────────────────────────────────────────────────────────────
 
+const FRACTURE_MS = 900;
+let destroying = false;
+
 function destroySlab() {
-  const slab = document.getElementById('slab');
-  if (slab.classList.contains('destroying')) return;
+  const slabEl = document.getElementById('slab');
+  const controls = document.getElementById('controls');
+  if (destroying) return;
+  destroying = true;
 
-  slab.classList.add('destroying');
+  emitCrumble(currentSlab);
+  setTimeout(triggerCrumbleCloud, 200);
 
-  slab.addEventListener('animationend', () => {
+  // Hide original slab + controls immediately
+  slabEl.style.opacity = '0';
+  controls.style.opacity = '0';
+  controls.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, easing: 'ease' });
+
+  // Launch fracture — slab breaks into falling pieces
+  fractureSlab(slabEl, currentSlab);
+
+  setTimeout(() => {
     document.getElementById('carved-text').innerHTML = '';
     charCount = 0;
     keyQueue  = [];
     isCarving = false;
 
+    clearParticles();
+
     currentSlab = pickSlab();
     applySlabShape(currentSlab);
     applyVeins(currentSlab);
 
-    slab.classList.remove('destroying');
-    slab.style.opacity = '0';
-    requestAnimationFrame(() => {
-      slab.style.transition = 'opacity 500ms ease';
-      slab.style.opacity    = '1';
+    triggerRevealCloud();
+    const fadeIn = slabEl.animate(
+      [{ opacity: 0 }, { opacity: 1 }],
+      { duration: 1200, easing: 'ease-out', fill: 'forwards' },
+    );
+    const fadeInCtrl = controls.animate(
+      [{ opacity: 0 }, { opacity: 1 }],
+      { duration: 1200, easing: 'ease-out', fill: 'forwards' },
+    );
+    fadeIn.onfinish = () => {
+      slabEl.style.opacity = '1';
+      fadeIn.cancel();
+      destroying = false;
+    };
+    fadeInCtrl.onfinish = () => {
+      controls.style.opacity = '1';
+      fadeInCtrl.cancel();
+    };
+  }, FRACTURE_MS);
+}
+
+// ── Slab fracture ────────────────────────────────────────────────────────────
+
+function fractureSlab(slabEl, slab) {
+  const scene = slabEl.parentElement;
+  const numPieces = Math.random() > 0.5 ? 3 : 2;
+  const polys = generateCrackPolygons(slab.w, slab.h, numPieces);
+
+  // Slab position within scene (flex-centered)
+  const slabLeft = slabEl.offsetLeft;
+  const slabTop = slabEl.offsetTop;
+  const slabTransform = slabEl.style.transform || '';
+
+  const fragments = [];
+
+  for (let i = 0; i < polys.length; i++) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'slab-fragment';
+    wrapper.style.left = slabLeft + 'px';
+    wrapper.style.top  = slabTop + 'px';
+    wrapper.style.width  = slab.w + 'px';
+    wrapper.style.height = slab.h + 'px';
+    wrapper.style.transform = slabTransform;
+
+    // Polygon clip selects this piece; slab's own clip-path gives stone edges
+    const polyStr = polys[i].map(p => `${p[0]}px ${p[1]}px`).join(', ');
+    wrapper.style.clipPath = `polygon(${polyStr})`;
+
+    // Clone the full slab with all marble layers
+    const clone = slabEl.cloneNode(true);
+    clone.style.opacity = '1';
+    clone.style.transform = 'none'; // wrapper handles transform
+    clone.style.position = 'absolute';
+    clone.style.inset = '0';
+    wrapper.appendChild(clone);
+
+    scene.appendChild(wrapper);
+    fragments.push(wrapper);
+  }
+
+  // Animate each piece falling
+  animateFragments(fragments, slab);
+}
+
+function animateFragments(fragments, slab) {
+  const n = fragments.length;
+
+  for (let i = 0; i < n; i++) {
+    // Each piece drifts away from center horizontally
+    const centerBias = (i / (n - 1 || 1)) - 0.5; // -0.5 to +0.5
+    const dx = centerBias * (80 + Math.random() * 60); // ±40-70px
+    const fallY = 350 + Math.random() * 200;
+    const rot = (Math.random() - 0.5) * 30; // ±15°
+    const delay = i * (30 + Math.random() * 50);  // staggered 30-80ms
+
+    // Piece centroid for transform-origin (rough: polygon center)
+    const frag = fragments[i];
+    frag.style.transformOrigin = `${slab.w * (0.3 + centerBias * 0.4)}px ${slab.h * 0.4}px`;
+
+    const baseTransform = frag.style.transform || '';
+
+    const anim = frag.animate([
+      { transform: `${baseTransform} translate(0px, 0px) rotate(0deg)`, opacity: 1 },
+      { transform: `${baseTransform} translate(${dx * 0.05}px, ${fallY * 0.02}px) rotate(${rot * 0.05}deg)`, opacity: 1, offset: 0.08 },
+      { transform: `${baseTransform} translate(${dx * 0.2}px, ${fallY * 0.1}px) rotate(${rot * 0.15}deg)`, opacity: 1, offset: 0.2 },
+      { transform: `${baseTransform} translate(${dx * 0.45}px, ${fallY * 0.3}px) rotate(${rot * 0.35}deg)`, opacity: 0.9, offset: 0.4 },
+      { transform: `${baseTransform} translate(${dx * 0.7}px, ${fallY * 0.55}px) rotate(${rot * 0.6}deg)`, opacity: 0.7, offset: 0.6 },
+      { transform: `${baseTransform} translate(${dx * 0.9}px, ${fallY * 0.8}px) rotate(${rot * 0.85}deg)`, opacity: 0.4, offset: 0.8 },
+      { transform: `${baseTransform} translate(${dx}px, ${fallY}px) rotate(${rot}deg)`, opacity: 0 },
+    ], {
+      duration: FRACTURE_MS - delay,
+      delay,
+      easing: 'ease-in',
+      fill: 'forwards',
     });
-    setTimeout(() => { slab.style.transition = ''; }, 600);
-  }, { once: true });
+
+    anim.onfinish = () => frag.remove();
+  }
+}
+
+function generateCrackPolygons(w, h, numPieces) {
+  const pad = 60; // extend beyond slab so only the slab's own clip-path is the edge
+
+  function makeCrackLine(xCenter) {
+    const pts = [];
+    const steps = 3 + Math.floor(Math.random() * 3); // 3-5 zigzag segments
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const jitter = (Math.random() - 0.5) * w * 0.14;
+      pts.push([xCenter + jitter, t * h]);
+    }
+    return pts;
+  }
+
+  if (numPieces === 2) {
+    const xC = w * (0.35 + Math.random() * 0.3);
+    const crack = makeCrackLine(xC);
+
+    return [
+      // Left piece: top-left → along crack → bottom-left
+      [[-pad, -pad], ...crack, [-pad, h + pad]],
+      // Right piece: top-right → along crack → bottom-right
+      [[w + pad, -pad], ...crack, [w + pad, h + pad]],
+    ];
+  }
+
+  // 3 pieces: two crack lines
+  const x1 = w * (0.2 + Math.random() * 0.15);
+  const x2 = w * (0.55 + Math.random() * 0.2);
+  const crack1 = makeCrackLine(x1);
+  const crack2 = makeCrackLine(x2);
+
+  return [
+    // Left piece
+    [[-pad, -pad], ...crack1, [-pad, h + pad]],
+    // Middle piece: crack1 top→bottom, then crack2 bottom→top
+    [...crack1, ...crack2.slice().reverse()],
+    // Right piece
+    [[w + pad, -pad], ...crack2, [w + pad, h + pad]],
+  ];
 }
 
 // ── Eternalize → PNG export ───────────────────────────────────────────────────

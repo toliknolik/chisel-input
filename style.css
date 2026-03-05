@@ -27,10 +27,20 @@ body {
 /* ── Scene ───────────────────────────────────────── */
 
 #scene {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+}
+
+#cloud {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 11;
 }
 
 /* ── Slab ────────────────────────────────────────── */
@@ -39,6 +49,18 @@ body {
   position: relative;
   isolation: isolate; /* keeps blend modes within the marble layer stack */
   /* width / height / clip-path set by JS */
+}
+
+/* ── Slab fracture fragments ────────────────────── */
+
+.slab-fragment {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  will-change: transform, opacity;
 }
 
 /* ── Marble layers ───────────────────────────────── */
@@ -129,7 +151,7 @@ body {
 #text-layer {
   position: absolute;
   /* left / top / width set by JS via computeSafeTextArea */
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   text-align: center;
   pointer-events: none;
   /* Mask text through the marble base texture — set by JS once base loads */
@@ -213,16 +235,180 @@ body {
   color: #b8b8a6;
 }
 
-/* ── Destroy animation ───────────────────────────── */
+/* Destroy animation is handled by Web Animations API in app.js */
 
-#slab.destroying {
-  animation: shatter 600ms ease forwards;
+/* ── Sidebar (dev tuning) ───────────────────────── */
+
+#sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 260px;
+  height: 100%;
+  background: #0e0d0b;
+  color: #c8bfaa;
+  z-index: 100;
+  transform: translateX(100%);
+  transition: transform 200ms ease;
+  overflow-y: auto;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px;
+  user-select: none;
 }
 
-@keyframes shatter {
-  0%   { opacity: 1; transform: var(--slab-transform) scale(1); }
-  15%  { opacity: 1; transform: var(--slab-transform) scale(1.015) rotate(0.4deg); }
-  30%  { opacity: 0.8; transform: var(--slab-transform) scale(0.98) rotate(-0.3deg); }
-  60%  { opacity: 0.3; transform: var(--slab-transform) scale(0.92) rotate(0.5deg); }
-  100% { opacity: 0; transform: var(--slab-transform) scale(0.85) rotate(-0.2deg); }
+#sidebar.open {
+  transform: translateX(0);
+}
+
+.sb-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid #2a2720;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sb-hint {
+  font-size: 9px;
+  color: #5a5445;
+}
+
+.sb-body {
+  padding: 8px 0 24px;
+}
+
+/* Collapsible groups */
+.sb-group {
+  border-bottom: 1px solid #1e1c17;
+}
+
+.sb-group-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8a8270;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.sb-group-header::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid #5a5445;
+  margin-right: 8px;
+  transition: transform 0.2s ease;
+}
+
+.sb-group-header:hover {
+  color: #c8bfaa;
+}
+
+.sb-group.open .sb-group-header::before {
+  transform: rotate(90deg);
+}
+
+.sb-group-body {
+  max-height: 0;
+  overflow: hidden;
+  padding: 0 16px;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+}
+
+.sb-group.open .sb-group-body {
+  max-height: 1200px;
+  padding: 0 16px 12px;
+}
+
+.sb-section {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5a5445;
+  padding: 14px 0 6px;
+  border-bottom: 1px solid #1e1c17;
+  margin-bottom: 8px;
+}
+
+.sb-row {
+  margin-bottom: 10px;
+}
+
+.sb-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 3px;
+  font-size: 10px;
+}
+
+.sb-val {
+  color: #c8a96e;
+  font-variant-numeric: tabular-nums;
+}
+
+#sidebar input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 2px;
+  background: #2a2720;
+  border-radius: 1px;
+  outline: none;
+  cursor: pointer;
+}
+
+#sidebar input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #c8a96e;
+  border: none;
+  transition: transform 0.1s ease;
+}
+
+#sidebar input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+}
+
+#sidebar input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #c8a96e;
+  border: none;
+}
+
+.sb-actions {
+  padding-top: 16px;
+  border-top: 1px solid #1e1c17;
+  margin-top: 8px;
+}
+
+.sb-actions button {
+  width: 100%;
+  padding: 8px;
+  background: none;
+  border: 1px solid #2a2720;
+  color: #c8bfaa;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.sb-actions button:hover {
+  background: rgba(200, 169, 110, 0.1);
+  border-color: #c8a96e;
 }
