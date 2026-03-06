@@ -24,6 +24,9 @@ let audioCtx     = null;
 let slabRotation = 0;
 let currentSlab  = null;
 let currentSafe  = null; // shape-aware text bounding box
+let crackCount   = 0;
+let usedEdges    = []; // track which edges (0-3) have been used for crack distribution
+const MAX_CRACKS = 4;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -201,17 +204,40 @@ function applySlabShape(slab) {
   const chip = { vcx, vcy, volW, volH, maskX, maskY, angle: slab.volumeAngle };
   currentSafe = computeSafeTextArea(slab, 20, chip);
   const tl = document.getElementById('text-layer');
+  // text-layer covers the whole slab (inset:0 in CSS); constrain text to safe zone
+  const ct = document.getElementById('carved-text');
+  ct.style.width = currentSafe.w + 'px';
+  // Use safe area top for start position, but allow more vertical room —
+  // the safe area width already constrains text away from edges horizontally,
+  // so vertically we just need a modest bottom margin (same as the safe padding).
   const safeTop = currentSafe.cy - currentSafe.h / 2;
-  tl.style.left      = currentSafe.cx + 'px';
-  tl.style.top       = safeTop + 'px';
-  tl.style.width     = currentSafe.w  + 'px';
-  tl.style.transform = 'translateX(-50%)';
+  tl.style.paddingTop = safeTop + 'px';
+  tl.style.paddingBottom = safeTop + 'px'; // mirror top padding for bottom
+
+  // Mask crack overlay to the volume face so cracks don't appear on chipped edges.
+  // The volume layer is rotated + flipped + offset, so we bake the same transform
+  // into an SVG mask in slab-local coordinates.
+  const crackOverlay = document.getElementById('crack-overlay');
+  const ang = slab.volumeAngle * Math.PI / 180;
+  // Build the transform that maps the volume-layer mask into slab coordinates:
+  // 1. Translate so vcx,vcy is origin
+  // 2. Rotate by volumeAngle
+  // 3. Flip Y (scaleY -1)
+  // 4. Position the mask path within the volume layer
+  const crackMaskSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${slab.w}" height="${slab.h}" viewBox="0 0 ${slab.w} ${slab.h}">` +
+    `<g transform="translate(${vcx},${vcy}) rotate(${slab.volumeAngle}) scale(1,-1) translate(${-volW/2},${-volH/2})">` +
+    `<path d="${slab.path}" transform="translate(${maskX},${maskY}) scale(${CHIP_SCALE})" fill="white"/>` +
+    `</g></svg>`;
+  const crackMaskUrl = `url("data:image/svg+xml,${encodeURIComponent(crackMaskSvg)}")`;
+  crackOverlay.style.webkitMaskImage = crackMaskUrl;
+  crackOverlay.style.maskImage       = crackMaskUrl;
+  crackOverlay.style.webkitMaskSize  = `${slab.w}px ${slab.h}px`;
+  crackOverlay.style.maskSize        = `${slab.w}px ${slab.h}px`;
 
   // Mask the text through the marble base texture so it looks carved into stone.
-  // The mask is the base.svg positioned to cover the full slab — the text layer's
-  // top-left offset relative to the slab is (cx − w/2, safeTop).
-  const maskOffX = -(currentSafe.cx - currentSafe.w  / 2);
-  const maskOffY = -safeTop;
+  // text-layer covers the full slab, so mask offset is (0, 0).
+  const maskOffX = 0;
+  const maskOffY = 0;
   el.style.setProperty('--slab-w',      slab.w + 'px');
   el.style.setProperty('--slab-h',      slab.h + 'px');
   tl.style.setProperty('--text-mask-x', maskOffX + 'px');
@@ -268,8 +294,13 @@ function applyVeins(slab) {
 
 function onKeyDown(e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'Backspace' || e.key === 'Delete') {
+    e.preventDefault();
+    if (!destroying) addCrack();
+    return;
+  }
   if (e.key.length > 1 && e.key !== ' ') return;
-  if (e.key === 'Backspace' || e.key === 'Delete') return;
+  e.preventDefault(); // stop space from activating focused buttons
   if (charCount + keyQueue.length >= MAX_CHARS) return;
 
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -294,8 +325,40 @@ function processQueue() {
   }, delay);
 }
 
+function getOrCreateWord(container) {
+  const last = container.lastChild;
+  if (last && last.nodeType === Node.ELEMENT_NODE && last.classList.contains('word')) return last;
+  const w = document.createElement('span');
+  w.className = 'word';
+  container.appendChild(w);
+  return w;
+}
+
+function isTextOverflowing() {
+  const container = document.getElementById('carved-text');
+  const tl = document.getElementById('text-layer');
+  // Available height = text-layer height minus top and bottom padding
+  const style = getComputedStyle(tl);
+  const available = tl.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  return container.scrollHeight > available + 2; // 2px tolerance
+}
+
 function carveCharacter(ch) {
   const container = document.getElementById('carved-text');
+
+  if (ch === ' ' || ch === '\u00A0') {
+    const spaceNode = document.createTextNode('\u00A0');
+    container.appendChild(spaceNode);
+    if (isTextOverflowing()) {
+      container.removeChild(spaceNode);
+      keyQueue.length = 0;
+      return;
+    }
+    charCount++;
+    return;
+  }
+
+  const word = getOrCreateWord(container);
 
   const span = document.createElement('span');
   span.className   = 'letter';
@@ -305,7 +368,16 @@ function carveCharacter(ch) {
   const kern = (Math.random() * 1 - 0.5).toFixed(2);
   span.style.marginRight = kern + 'px';
 
-  container.appendChild(span);
+  word.appendChild(span);
+
+  if (isTextOverflowing()) {
+    span.remove();
+    // Remove empty word wrapper if it was just created
+    if (word.childNodes.length === 0) word.remove();
+    keyQueue.length = 0;
+    return;
+  }
+
   charCount++;
 
   // Emit chisel dust at the letter's position (slab-local coordinates)
@@ -359,6 +431,208 @@ function playChisel() {
   src.start(now);
 }
 
+// ── Backspace cracks ─────────────────────────────────────────────────────────
+
+function addCrack() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  crackCount++;
+  playCrack();
+
+  if (crackCount >= MAX_CRACKS) {
+    destroySlab();
+    return;
+  }
+
+  const severity = crackCount; // 1 or 2
+  const overlay = document.getElementById('crack-overlay');
+  const w = currentSlab.w;
+  const h = currentSlab.h;
+  const numCracks = 2 + Math.floor(Math.random() * 2); // 2-3 cracks per keystroke
+
+  const allAnimTargets = [];
+
+  for (let ci = 0; ci < numCracks; ci++) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('fill', 'none');
+
+    const spine = generateCrackSpine(w, h, severity);
+    const branches = generateBranches(spine, w, h, severity);
+    const allPaths = [spine, ...branches];
+
+    for (let pi = 0; pi < allPaths.length; pi++) {
+      const pts = allPaths[pi];
+      const d = pointsToSvgPath(pts);
+      const isBranch = pi > 0;
+
+      const strokeW = isBranch ? [0, 0.3, 0.38, 0.45][severity] : [0, 0.4, 0.55, 0.65][severity];
+      const opacity = isBranch ? [0, 0.08, 0.11, 0.14][severity] : [0, 0.12, 0.16, 0.2][severity];
+
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('stroke', `rgba(90,85,80,${opacity})`);
+      p.setAttribute('stroke-width', String(strokeW));
+      p.setAttribute('stroke-linecap', 'round');
+      p.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(p);
+      // Stagger each crack slightly so they don't all appear at once
+      const baseDelay = ci * 80;
+      allAnimTargets.push({ el: p, delay: baseDelay + (isBranch ? 60 + pi * 25 : 0) });
+    }
+
+    overlay.appendChild(svg);
+  }
+
+  // Animate all paths growing
+  requestAnimationFrame(() => {
+    for (const { el, delay } of allAnimTargets) {
+      const len = el.getTotalLength();
+      el.style.strokeDasharray = len;
+      el.style.strokeDashoffset = len;
+      el.style.transition = `stroke-dashoffset ${[0, 300, 200, 150][severity]}ms ease-out ${delay}ms`;
+    }
+    requestAnimationFrame(() => {
+      for (const { el } of allAnimTargets) el.style.strokeDashoffset = '0';
+    });
+  });
+}
+
+// Generate crack spine — edge-to-edge across the slab
+function generateCrackSpine(w, h, severity) {
+  // Prefer edges not yet used for better spatial distribution
+  const allEdges = [0, 1, 2, 3];
+  const unused = allEdges.filter(e => !usedEdges.includes(e));
+  const pool = unused.length > 0 ? unused : allEdges;
+  const startEdge = pool[Math.floor(Math.random() * pool.length)];
+  usedEdges.push(startEdge);
+
+  // End on opposite edge (70%) or adjacent edge (30%) for variety
+  const opposite = (startEdge + 2) % 4;
+  const adjacent = Math.random() > 0.5 ? (startEdge + 1) % 4 : (startEdge + 3) % 4;
+  const endEdge = Math.random() < 0.7 ? opposite : adjacent;
+
+  const edgePoint = (edge, w, h) => {
+    if (edge === 0) return [w * (0.15 + Math.random() * 0.7), 0];
+    if (edge === 1) return [w, h * (0.15 + Math.random() * 0.7)];
+    if (edge === 2) return [w * (0.15 + Math.random() * 0.7), h];
+    return [0, h * (0.15 + Math.random() * 0.7)];
+  };
+
+  let [sx, sy] = edgePoint(startEdge, w, h);
+  let [ex, ey] = edgePoint(endEdge, w, h);
+
+  // Mostly straight with very subtle lateral drift
+  const segments = 20 + Math.floor(Math.random() * 10);
+  const points = [[sx, sy]];
+
+  const mdx = ex - sx, mdy = ey - sy;
+  const mLen = Math.sqrt(mdx * mdx + mdy * mdy) || 1;
+  const perpX = -mdy / mLen, perpY = mdx / mLen;
+
+  let drift = 0;
+  for (let i = 1; i <= segments; i++) {
+    const t = i / segments;
+    drift += (Math.random() - 0.5) * [0, 2.5, 3.5, 4.5][severity];
+    drift *= 0.95;
+    points.push([sx + mdx * t + perpX * drift, sy + mdy * t + perpY * drift]);
+  }
+  return points;
+}
+
+// Generate branch offshoots at acute angles (15-35°) like real stone
+function generateBranches(spine, w, h, severity) {
+  const branches = [];
+  const numBranches = severity === 1
+    ? 3 + Math.floor(Math.random() * 3)
+    : 5 + Math.floor(Math.random() * 4);
+
+  for (let b = 0; b < numBranches; b++) {
+    // Pick a point along the spine (avoid very start/end)
+    const idx = 2 + Math.floor(Math.random() * (spine.length - 4));
+    const [bx, by] = spine[idx];
+
+    // Get spine direction at this point
+    const prev = spine[Math.max(0, idx - 1)];
+    const next = spine[Math.min(spine.length - 1, idx + 1)];
+    const sdx = next[0] - prev[0];
+    const sdy = next[1] - prev[1];
+    const sLen = Math.sqrt(sdx * sdx + sdy * sdy) || 1;
+
+    // Branch at acute angle (15-35°) from spine direction, randomly left or right
+    const angle = (15 + Math.random() * 20) * Math.PI / 180;
+    const side = Math.random() > 0.5 ? 1 : -1;
+    const cos = Math.cos(side * angle);
+    const sin = Math.sin(side * angle);
+    // Rotate spine direction by the angle
+    const bdx = (sdx / sLen) * cos - (sdy / sLen) * sin;
+    const bdy = (sdx / sLen) * sin + (sdy / sLen) * cos;
+
+    // Branch length
+    const branchLen = (severity === 1 ? 20 : 35) + Math.random() * 30;
+    const steps = 4 + Math.floor(Math.random() * 4);
+    const pts = [[bx, by]];
+
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      // Small angular jitter within the branch
+      const jitter = (1 - t) * 3;
+      pts.push([
+        bx + bdx * branchLen * t + (Math.random() - 0.5) * jitter,
+        by + bdy * branchLen * t + (Math.random() - 0.5) * jitter,
+      ]);
+    }
+    branches.push(pts);
+  }
+  return branches;
+}
+
+// Convert point array to SVG path — straight line segments for angular look
+function pointsToSvgPath(pts) {
+  if (pts.length < 2) return '';
+  const f = n => n.toFixed(1);
+  let d = `M${f(pts[0][0])} ${f(pts[0][1])}`;
+  for (let i = 1; i < pts.length; i++) {
+    d += ` L${f(pts[i][0])} ${f(pts[i][1])}`;
+  }
+  return d;
+}
+
+function playCrack() {
+  if (!audioCtx) return;
+
+  const now = audioCtx.currentTime;
+  const bufLen = Math.floor(audioCtx.sampleRate * 0.04); // 40ms — sharp snap
+  const buf    = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+  const data   = buf.getChannelData(0);
+
+  for (let i = 0; i < bufLen; i++) {
+    const env = Math.pow(1 - i / bufLen, 5); // Very fast decay
+    data[i]   = (Math.random() * 2 - 1) * env;
+  }
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+
+  const bp = audioCtx.createBiquadFilter();
+  bp.type            = 'bandpass';
+  bp.frequency.value = 4500 + Math.random() * 1500; // Higher pitch than chisel
+  bp.Q.value         = 1.2;
+
+  const hp = audioCtx.createBiquadFilter();
+  hp.type            = 'highpass';
+  hp.frequency.value = 1200;
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.35, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+  src.connect(bp);
+  bp.connect(hp);
+  hp.connect(gain);
+  gain.connect(audioCtx.destination);
+  src.start(now);
+}
+
 // ── Destroy slab ──────────────────────────────────────────────────────────────
 
 const FRACTURE_MS = 900;
@@ -383,9 +657,12 @@ function destroySlab() {
 
   setTimeout(() => {
     document.getElementById('carved-text').innerHTML = '';
-    charCount = 0;
-    keyQueue  = [];
-    isCarving = false;
+    document.getElementById('crack-overlay').innerHTML = '';
+    charCount  = 0;
+    crackCount = 0;
+    usedEdges  = [];
+    keyQueue   = [];
+    isCarving  = false;
 
     clearParticles();
 

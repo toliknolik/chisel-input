@@ -11,23 +11,28 @@ export const particleParams = {
   gravity:   0.12,
   drag:      0.98,
   // Chisel dust
-  dustMin:   5,
-  dustMax:   8,
-  dustSize:  2.0,       // base size ± random
-  dustAlpha: 0.6,
+  dustMin:   16,
+  dustMax:   30,
+  dustSize:  3.2,       // base size ± random
+  dustAlpha: 0.60,
   dustDecay: 0.022,
-  dustVx:    3.0,       // horizontal spread
-  dustVy:    2.5,       // upward burst
-  // Crumble — fragments
-  fragCount: 120,
-  fragSize:  4.0,
+  dustVx:    3.7,       // horizontal spread
+  dustVy:    4.7,       // upward burst
+  // Crumble — large chunks (few big pieces)
+  chunkCount: 18,
+  chunkSize:  10.0,
+  chunkAlpha: 0.85,
+  chunkDecay: 0.005,
+  // Crumble — fragments (medium pieces)
+  fragCount: 140,
+  fragSize:  4.5,
   fragAlpha: 0.8,
   fragDecay: 0.008,
-  // Crumble — chips
-  chipCount: 180,
+  // Crumble — chips (small debris)
+  chipCount: 220,
   chipSize:  2.0,
   chipAlpha: 0.5,
-  chipDecay: 0.008,
+  chipDecay: 0.010,
 };
 
 const STONE_COLORS = [
@@ -87,17 +92,29 @@ void main() {
   float c = cos(vRotation), s = sin(vRotation);
   vec2 ruv = vec2(uv.x * c - uv.y * s, uv.x * s + uv.y * c);
 
+  // Skew UV for asymmetry (each particle gets unique skew via rotation)
+  vec2 sk = ruv + vec2(ruv.y * 0.2, 0.0);
+
   float dist;
-  if (vShape < 0.5) {
-    // Triangle — irregular stone chip
-    dist = max(abs(ruv.x) * 1.732 + ruv.y, -ruv.y * 2.0) - 0.35;
+  if (vShape < 0.25) {
+    // Acute shard — pointy asymmetric triangle
+    dist = max(sk.x * 1.2 + sk.y * 1.8, max(-sk.x * 1.5 + sk.y * 0.8, -sk.y * 1.6)) - 0.35;
+  } else if (vShape < 0.5) {
+    // Thin splinter — very elongated
+    dist = max(abs(sk.x) - 0.08, abs(sk.y) - 0.44);
+  } else if (vShape < 0.75) {
+    // Skewed trapezoid — broken chip
+    float taper = sk.y * 0.3;
+    dist = max(abs(sk.x + taper) - 0.28, abs(sk.y) - 0.32);
   } else {
-    // Rectangle — angular stone fragment
-    dist = max(abs(ruv.x) - 0.35, abs(ruv.y) - 0.25) ;
+    // Jagged fragment — irregular angular shape
+    vec2 p = abs(sk);
+    dist = max(p.x * 0.7 + p.y * 0.95 - 0.33,
+               max(p.x - 0.22, p.y * 0.6 + p.x * 0.5 - 0.3));
   }
 
-  // Soft edge
-  float shapeAlpha = 1.0 - smoothstep(-0.02, 0.06, dist);
+  // Sharp edge — no soft blur that makes things look circular
+  float shapeAlpha = 1.0 - smoothstep(-0.01, 0.02, dist);
   if (shapeAlpha < 0.01) discard;
 
   gl_FragColor = vec4(vColor, shapeAlpha * vAlpha);
@@ -162,36 +179,70 @@ export function emitChiselDust(x, y) {
   requestRender();
 }
 
-// Crumble: falling stone fragments
+// Crumble: falling stone fragments with power-law size distribution
 export function emitCrumble(slab) {
   const pp = particleParams;
+  const cx = slab.w / 2;
+  const cy = slab.h / 2;
 
-  // Falling stone fragments
+  // Helper: radial burst velocity from slab center
+  function burstVelocity(x, y, strength) {
+    const dx = x - cx, dy = y - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = dx / dist, ny = dy / dist;
+    const force = strength * (0.5 + Math.random() * 0.8);
+    return {
+      vx: nx * force + (Math.random() - 0.5) * strength * 0.4,
+      vy: ny * force + (Math.random() - 0.5) * strength * 0.3 - Math.random() * 1.5,
+    };
+  }
+
+  // Large chunks — few heavy pieces that tumble outward
+  for (let i = 0; i < pp.chunkCount; i++) {
+    const fx = slab.w * (0.15 + Math.random() * 0.7);
+    const fy = slab.h * (0.15 + Math.random() * 0.7);
+    const { vx, vy } = burstVelocity(fx, fy, 3.5);
+    const p = makeParticle(
+      fx, fy, vx, vy,
+      pp.chunkSize * (0.6 + Math.random() * 0.8),
+      pp.chunkAlpha * (0.8 + Math.random() * 0.3),
+      pp.chunkDecay * (0.7 + Math.random() * 0.6),
+    );
+    // Chunks prefer pentagon/rect shapes (bigger look)
+    p.shape = Math.random() < 0.6 ? 0.85 : 0.35;
+    p.vr = (Math.random() - 0.5) * 0.15; // slow tumble
+    particles.push(p);
+  }
+
+  // Medium fragments — burst outward from center
   for (let i = 0; i < pp.fragCount; i++) {
     const fx = Math.random() * slab.w;
     const fy = Math.random() * slab.h;
+    const { vx, vy } = burstVelocity(fx, fy, 2.5);
     particles.push(makeParticle(
-      fx, fy,
-      (Math.random() - 0.5) * 2.5,
-      0.5 + Math.random() * 2,
+      fx, fy, vx, vy,
       pp.fragSize * (0.4 + Math.random() * 1.2),
       pp.fragAlpha * (0.7 + Math.random() * 0.5),
       pp.fragDecay * (0.7 + Math.random() * 0.7),
     ));
   }
 
-  // Small sharp chips
+  // Small chips — fast scatter, more horizontal spread
   for (let i = 0; i < pp.chipCount; i++) {
     const fx = Math.random() * slab.w;
     const fy = Math.random() * slab.h;
-    particles.push(makeParticle(
+    const { vx, vy } = burstVelocity(fx, fy, 1.8);
+    const p = makeParticle(
       fx, fy,
-      (Math.random() - 0.5) * 1.8,
-      0.2 + Math.random() * 1.5,
-      pp.chipSize * (0.5 + Math.random() * 1.0),
+      vx + (Math.random() - 0.5) * 2,
+      vy,
+      pp.chipSize * (0.6 + Math.random() * 0.8),
       pp.chipAlpha * (0.6 + Math.random() * 0.8),
       pp.chipDecay * (0.6 + Math.random() * 0.8),
-    ));
+    );
+    // Chips prefer splinter/triangle shapes
+    p.shape = Math.random() < 0.5 ? 0.6 : Math.random() * 0.25;
+    particles.push(p);
   }
 
   requestRender();
@@ -217,7 +268,7 @@ function makeParticle(x, y, vx, vy, size, alpha, decay) {
     vr: (Math.random() - 0.5) * 0.3,
     life: 1.0,
     color: STONE_COLORS[Math.floor(Math.random() * STONE_COLORS.length)],
-    shape: Math.random() > 0.4 ? 0 : 1, // 0 = triangle, 1 = rectangle
+    shape: Math.random(), // 0-.25 triangle, .25-.5 rect, .5-.75 splinter, .75-1 pentagon
   };
 }
 
