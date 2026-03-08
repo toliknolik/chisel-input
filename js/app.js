@@ -1,7 +1,9 @@
 import { SLABS } from './slabs.js';
 import { initParticles, resizeParticles, emitChiselDust, emitCrumble, clearParticles } from './particles.js';
 import { initCloud, triggerCrumbleCloud, triggerRevealCloud } from './cloud.js';
+import { initRays, resizeRays } from './rays.js';
 import { initSidebar } from './sidebar.js';
+import { lightParams, setUpdateLighting } from './light.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -28,6 +30,8 @@ let crackCount   = 0;
 let usedEdges    = []; // track which edges (0-3) have been used for crack distribution
 const MAX_CRACKS = 4;
 
+// lightParams imported from light.js (shared with sidebar)
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 function updateSceneZoom() {
@@ -37,8 +41,10 @@ function updateSceneZoom() {
 }
 
 function init() {
+  setUpdateLighting(updateLighting);
   initCloud();
   initParticles();
+  initRays();
   updateSceneZoom();
   window.addEventListener('resize', updateSceneZoom);
   currentSlab = pickSlab();
@@ -184,6 +190,27 @@ function applySlabShape(slab) {
   vol.style.webkitMaskPosition = `${maskX}px ${maskY}px`;
   vol.style.maskPosition       = `${maskX}px ${maskY}px`;
 
+  // Surface lighting: feDiffuseLighting + feSpecularLighting on turbulence bump map.
+  // Same position/transform/mask as the volume layer.
+  const light = document.querySelector('.marble-light');
+  light.style.left       = `${vcx}px`;
+  light.style.top        = `${vcy}px`;
+  light.style.marginLeft = `${-volW / 2}px`;
+  light.style.marginTop  = `${-volH / 2}px`;
+  light.style.transform  = `rotate(${slab.volumeAngle}deg) scaleY(-1)`;
+  light.style.webkitMaskImage    = maskUrl;
+  light.style.maskImage          = maskUrl;
+  light.style.webkitMaskSize     = `${maskW}px ${maskH}px`;
+  light.style.maskSize           = `${maskW}px ${maskH}px`;
+  light.style.webkitMaskPosition = `${maskX}px ${maskY}px`;
+  light.style.maskPosition       = `${maskX}px ${maskY}px`;
+  light.style.width  = `${volW}px`;
+  light.style.height = `${volH}px`;
+  // Store dimensions for updateLighting() rebuilds
+  light.dataset.volW = volW;
+  light.dataset.volH = volH;
+  updateLighting();
+
   // Chip edge stroke: slab path scaled + translated to match the mask boundary.
   const edge = document.querySelector('.marble-chip-edge');
   edge.style.left       = `${vcx}px`;
@@ -193,7 +220,7 @@ function applySlabShape(slab) {
   edge.style.marginLeft = `${-volW / 2}px`;
   edge.style.marginTop  = `${-volH / 2}px`;
   edge.style.transform  = `rotate(${slab.volumeAngle}deg) scaleY(-1)`;
-  const edgeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${volW}" height="${volH}" viewBox="0 0 ${volW} ${volH}"><path d="${slab.path}" transform="translate(${maskX},${maskY}) scale(${CHIP_SCALE})" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="1.5"/></svg>`;
+  const edgeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${volW}" height="${volH}" viewBox="0 0 ${volW} ${volH}"><path d="${slab.path}" transform="translate(${maskX},${maskY}) scale(${CHIP_SCALE})" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="0.7"/></svg>`;
   edge.style.backgroundImage    = `url("data:image/svg+xml,${encodeURIComponent(edgeSvg)}")`;
   edge.style.backgroundSize     = `${volW}px ${volH}px`;
   edge.style.backgroundRepeat   = 'no-repeat';
@@ -211,8 +238,9 @@ function applySlabShape(slab) {
   // the safe area width already constrains text away from edges horizontally,
   // so vertically we just need a modest bottom margin (same as the safe padding).
   const safeTop = currentSafe.cy - currentSafe.h / 2;
+  const safeBottom = slab.h - (currentSafe.cy + currentSafe.h / 2);
   tl.style.paddingTop = safeTop + 'px';
-  tl.style.paddingBottom = safeTop + 'px'; // mirror top padding for bottom
+  tl.style.paddingBottom = safeBottom + 'px';
 
   // Mask crack overlay to the volume face so cracks don't appear on chipped edges.
   // The volume layer is rotated + flipped + offset, so we bake the same transform
@@ -248,6 +276,35 @@ function applySlabShape(slab) {
   // Zoom is set once in init / on resize — not per-slab.
 
   resizeParticles(slab);
+  resizeRays(slab);
+}
+
+// ── Lighting SVG rebuild ──────────────────────────────────────────────────────
+// Called on init and whenever sidebar changes a light param.
+
+function updateLighting() {
+  const light = document.querySelector('.marble-light');
+  if (!light || !light.dataset.volW) return;
+  const volW = parseFloat(light.dataset.volW);
+  const volH = parseFloat(light.dataset.volH);
+  const lp = lightParams;
+
+  light.style.opacity      = lp.opacity;
+  light.style.mixBlendMode = lp.blendMode;
+
+  light.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${volW}" height="${volH}" viewBox="0 0 ${volW} ${volH}" style="display:block">` +
+    `<filter id="marble-lighting" x="0" y="0" width="100%" height="100%">` +
+      `<feTurbulence type="fractalNoise" baseFrequency="${lp.baseFrequency}" numOctaves="${lp.numOctaves}" seed="42" result="noise"/>` +
+      `<feDiffuseLighting in="noise" surfaceScale="${lp.diffuseSurface}" diffuseConstant="${lp.diffuseConstant}" lighting-color="#F8F1DF" result="diffuse">` +
+        `<feDistantLight azimuth="${lp.azimuth}" elevation="${lp.elevation}"/>` +
+      `</feDiffuseLighting>` +
+      `<feSpecularLighting in="noise" surfaceScale="${lp.specSurface}" specularConstant="${lp.specConstant}" specularExponent="${lp.specExponent}" lighting-color="#FFFFFF" result="specular">` +
+        `<feDistantLight azimuth="${lp.azimuth}" elevation="${lp.elevation}"/>` +
+      `</feSpecularLighting>` +
+      `<feComposite in="specular" in2="diffuse" operator="arithmetic" k1="0" k2="1" k3="0.6" k4="0" result="lit"/>` +
+    `</filter>` +
+    `<rect width="100%" height="100%" filter="url(#marble-lighting)"/>` +
+  `</svg>`;
 }
 
 // ── Vein overlays ─────────────────────────────────────────────────────────────
@@ -326,11 +383,18 @@ function processQueue() {
 }
 
 function getOrCreateWord(container) {
-  const last = container.lastChild;
+  const cursor = document.getElementById('cursor');
+  // Last content node is the one before the cursor
+  const last = cursor ? cursor.previousSibling : container.lastChild;
   if (last && last.nodeType === Node.ELEMENT_NODE && last.classList.contains('word')) return last;
   const w = document.createElement('span');
   w.className = 'word';
-  container.appendChild(w);
+  // Insert before cursor so cursor stays at the end
+  if (cursor && cursor.parentNode === container) {
+    container.insertBefore(w, cursor);
+  } else {
+    container.appendChild(w);
+  }
   return w;
 }
 
@@ -348,7 +412,12 @@ function carveCharacter(ch) {
 
   if (ch === ' ' || ch === '\u00A0') {
     const spaceNode = document.createTextNode('\u00A0');
-    container.appendChild(spaceNode);
+    const cursor = document.getElementById('cursor');
+    if (cursor && cursor.parentNode === container) {
+      container.insertBefore(spaceNode, cursor);
+    } else {
+      container.appendChild(spaceNode);
+    }
     if (isTextOverflowing()) {
       container.removeChild(spaceNode);
       keyQueue.length = 0;
@@ -656,7 +725,10 @@ function destroySlab() {
   fractureSlab(slabEl, currentSlab);
 
   setTimeout(() => {
-    document.getElementById('carved-text').innerHTML = '';
+    const ct = document.getElementById('carved-text');
+    const cur = document.getElementById('cursor');
+    ct.innerHTML = '';
+    if (cur) ct.appendChild(cur);
     document.getElementById('crack-overlay').innerHTML = '';
     charCount  = 0;
     crackCount = 0;

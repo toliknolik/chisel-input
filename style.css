@@ -99,6 +99,22 @@ body {
   height: 100%;
 }
 
+/* Surface lighting: feDiffuseLighting + feSpecularLighting on turbulence bump map.
+   Same size/position/transform/mask as .marble-volume.
+   Composited via soft-light blend for subtle stone surface depth. */
+.marble-light {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+  mix-blend-mode: soft-light;
+  opacity: 0.35;
+  overflow: hidden;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+  /* width, height, transform, margin, mask set by JS */
+}
+
 /* Chip edge: same size/position/transform as .marble-volume.
    Background is an SVG stroke of the slab path at the mask offset,
    giving the chip a luminous edge (replicates Figma's volume stroke).
@@ -130,6 +146,19 @@ body {
   width: 100%;
   height: 100%;
 }
+
+/* Light rays: WebGL canvas blended over marble layers.
+   Fills the slab content box; inherits slab clip-path.
+   Rendered at half resolution for performance. */
+#rays {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  mix-blend-mode: soft-light; /* overridden by JS */
+}
+
 
 /* ── Crack overlay (backspace damage) ───────────── */
 
@@ -171,7 +200,7 @@ body {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   /* padding-top/bottom set by JS from safe area */
   overflow: hidden;
@@ -229,11 +258,11 @@ body {
   height: 1.1em;
   background: var(--text-color);
   opacity: 0.5;
-  vertical-align: text-bottom;
+  vertical-align: baseline;
   margin-left: 2px;
   animation: blink 1.1s step-end infinite;
   position: relative;
-  top: 1px;
+  top: 3px;
 }
 
 @keyframes blink {
@@ -419,6 +448,23 @@ body {
   border-radius: 50%;
   background: #c8a96e;
   border: none;
+}
+
+#sidebar select {
+  width: 100%;
+  background: #1e1c17;
+  color: #c8a96e;
+  border: 1px solid #2a2720;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+
+#sidebar select:focus {
+  border-color: #c8a96e;
 }
 
 .sb-actions {

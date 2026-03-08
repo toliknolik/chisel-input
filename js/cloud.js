@@ -6,7 +6,7 @@
 // ── Tunable parameters (read by sidebar) ─────────────────────────────────────
 export const cloudParams = {
   // Envelope
-  peakDensity: 0.56,
+  peakDensity: 0.48,
   maxRadius:   2.0,
   rampTime:    0.4,
   holdTime:    0.3,
