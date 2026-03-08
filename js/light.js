@@ -16,26 +16,6 @@ export const lightParams = {
   blendMode:        'soft-light',
 };
 
-// ── Dappled Light Params ─────────────────────────────────────────────────────
-// FBM noise-based dappled light with OKLab-inspired color grading.
-// Rendered on a WebGL canvas inside #slab, composited via CSS blend mode.
-
-export const rayParams = {
-  intensity:  0.25,       // overall alpha (0 = off)
-  speed:      0.3,        // animation speed multiplier
-  blendMode:  'normal',
-  // Dappled noise
-  noiseScale:    3.0,     // patch size (lower = larger patches)
-  octaves:       4,       // FBM detail (1-6)
-  driftSpeed:    0.08,    // slow animation drift
-  contrast:      1.5,     // shadow/highlight separation
-  // Color grading
-  warmth:        0.5,     // tint intensity (0 = monochrome, 1 = full)
-  shadowR: 0.78, shadowG: 0.68, shadowB: 0.48,         // warm amber shadow
-  highlightR: 0.85, highlightG: 0.87, highlightB: 0.92, // cool white highlight
-};
-
-
 // Update callback — set by app.js once it defines updateLighting().
 // This breaks the circular dependency: sidebar → light.js ← app.js
 let _updateFn = null;

@@ -1,7 +1,6 @@
 import { SLABS } from './slabs.js';
 import { initParticles, resizeParticles, emitChiselDust, emitCrumble, clearParticles } from './particles.js';
 import { initCloud, triggerCrumbleCloud, triggerRevealCloud } from './cloud.js';
-import { initRays, resizeRays } from './rays.js';
 import { initSidebar } from './sidebar.js';
 import { lightParams, setUpdateLighting } from './light.js';
 
@@ -44,7 +43,6 @@ function init() {
   setUpdateLighting(updateLighting);
   initCloud();
   initParticles();
-  initRays();
   updateSceneZoom();
   window.addEventListener('resize', updateSceneZoom);
   currentSlab = pickSlab();
@@ -234,13 +232,17 @@ function applySlabShape(slab) {
   // text-layer covers the whole slab (inset:0 in CSS); constrain text to safe zone
   const ct = document.getElementById('carved-text');
   ct.style.width = currentSafe.w + 'px';
-  // Use safe area top for start position, but allow more vertical room —
-  // the safe area width already constrains text away from edges horizontally,
-  // so vertically we just need a modest bottom margin (same as the safe padding).
+  // Position text within safe area — center both vertically and horizontally.
+  // Use symmetric horizontal padding (max of left/right) so text looks visually centered.
   const safeTop = currentSafe.cy - currentSafe.h / 2;
   const safeBottom = slab.h - (currentSafe.cy + currentSafe.h / 2);
+  const safeLeft = currentSafe.cx - currentSafe.w / 2;
+  const safeRight = slab.w - (currentSafe.cx + currentSafe.w / 2);
+  const safeH = Math.max(safeLeft, safeRight);
   tl.style.paddingTop = safeTop + 'px';
   tl.style.paddingBottom = safeBottom + 'px';
+  tl.style.paddingLeft = safeH + 'px';
+  tl.style.paddingRight = safeH + 'px';
 
   // Mask crack overlay to the volume face so cracks don't appear on chipped edges.
   // The volume layer is rotated + flipped + offset, so we bake the same transform
@@ -276,7 +278,6 @@ function applySlabShape(slab) {
   // Zoom is set once in init / on resize — not per-slab.
 
   resizeParticles(slab);
-  resizeRays(slab);
 }
 
 // ── Lighting SVG rebuild ──────────────────────────────────────────────────────
@@ -404,7 +405,11 @@ function isTextOverflowing() {
   // Available height = text-layer height minus top and bottom padding
   const style = getComputedStyle(tl);
   const available = tl.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-  return container.scrollHeight > available + 2; // 2px tolerance
+  // Tolerance accounts for line-height leading below the last baseline
+  const fontSize = parseFloat(getComputedStyle(container).fontSize);
+  const lineHeight = parseFloat(getComputedStyle(container).lineHeight);
+  const leading = lineHeight - fontSize;
+  return container.scrollHeight > available + leading;
 }
 
 function carveCharacter(ch) {

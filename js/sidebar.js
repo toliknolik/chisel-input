@@ -4,8 +4,7 @@
 
 import { cloudParams, testCloud } from './cloud.js';
 import { particleParams, testParticles } from './particles.js';
-import { lightParams, updateLighting, rayParams } from './light.js';
-import { updateRays } from './rays.js';
+import { lightParams, updateLighting } from './light.js';
 
 const GROUPS = [
   {
@@ -80,32 +79,6 @@ const GROUPS = [
       { id: 'opacity',         label: 'Opacity',    min: 0, max: 1, step: 0.05 },
       { id: 'blendMode',       label: 'Blend Mode', type: 'select',
         options: ['soft-light', 'overlay', 'multiply', 'screen', 'hard-light', 'color-dodge', 'normal'] },
-    ],
-  },
-  {
-    group: 'Dappled Light',
-    params: rayParams,
-    onChange: updateRays,
-    controls: [
-      { section: 'Noise' },
-      { id: 'noiseScale',  label: 'Patch Size',  min: 1, max: 8, step: 0.1 },
-      { id: 'octaves',     label: 'Detail',       min: 1, max: 6, step: 1 },
-      { id: 'driftSpeed',  label: 'Drift',        min: 0, max: 0.3, step: 0.01 },
-      { id: 'contrast',    label: 'Contrast',     min: 0.5, max: 3, step: 0.1 },
-      { section: 'Color Grading' },
-      { id: 'warmth',      label: 'Warmth',       min: 0, max: 1, step: 0.05 },
-      { id: 'shadowR',     label: 'Shadow R',     min: 0, max: 1, step: 0.01 },
-      { id: 'shadowG',     label: 'Shadow G',     min: 0, max: 1, step: 0.01 },
-      { id: 'shadowB',     label: 'Shadow B',     min: 0, max: 1, step: 0.01 },
-      { id: 'highlightR',  label: 'Highlight R',  min: 0, max: 1, step: 0.01 },
-      { id: 'highlightG',  label: 'Highlight G',  min: 0, max: 1, step: 0.01 },
-      { id: 'highlightB',  label: 'Highlight B',  min: 0, max: 1, step: 0.01 },
-      { section: 'Animation' },
-      { id: 'intensity',   label: 'Intensity',    min: 0, max: 0.5, step: 0.01 },
-      { id: 'speed',       label: 'Speed',        min: 0, max: 2, step: 0.05 },
-      { section: 'Compositing' },
-      { id: 'blendMode', label: 'Blend Mode', type: 'select',
-        options: ['soft-light', 'overlay', 'screen', 'hard-light', 'multiply', 'normal'] },
     ],
   },
 ];
