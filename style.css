@@ -5,7 +5,7 @@
 }
 
 :root {
-  --text-color: #d3d5cc;
+  --text-color: #aaa69b;
   --control-color: #9b9a87;
 }
 
@@ -108,11 +108,29 @@ body {
   top: 50%;
   pointer-events: none;
   mix-blend-mode: soft-light;
-  opacity: 0.35;
+  opacity: 0.5;
   overflow: hidden;
   mask-repeat: no-repeat;
   -webkit-mask-repeat: no-repeat;
   /* width, height, transform, margin, mask set by JS */
+}
+
+/* Depth bevel: blurred slab mask → heightmap → feDiffuseLighting.
+   Creates a 3D rounded-edge effect on the slab silhouette.
+   Covers the full slab, composited via overlay blend. */
+.marble-depth {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.3;
+  overflow: hidden;
+}
+
+.marble-depth svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* Chip edge: same size/position/transform as .marble-volume.
@@ -148,6 +166,22 @@ body {
 }
 
 
+
+/* Directional light hint — very gentle gradient matching light azimuth (225°).
+   Upper-left slightly brighter, lower-right slightly warmer/darker.
+   Much subtler than a bevel — just suggesting surface curvature. */
+.marble-directional {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    225deg,
+    rgba(255,255,255,0.07) 0%,
+    transparent 40%,
+    transparent 60%,
+    rgba(140,130,115,0.05) 100%
+  );
+}
 
 /* ── Crack overlay (backspace damage) ───────────── */
 
@@ -216,10 +250,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
   word-break: normal;
   overflow-wrap: break-word;
-  /* Engraved chisel — dark above (groove shadow), light below (groove catches light) */
+  /* V-groove carving — light from upper-left.
+     Upper-left groove wall in deep shadow, lower-right lip catches bright light.
+     Text color = groove interior. Multiple layers build up realistic depth. */
   text-shadow:
-    0 -1px 0.5px rgba(134,133,130,0.6),
-    0  1px 0     rgba(248,249,246,0.8);
+    /* 1. Hard shadow — upper-left groove wall, darkest */
+    -0.8px -1px   0     rgba(60,55,45,0.7),
+    /* 2. Mid shadow — slightly offset, softer edge */
+    -0.4px -0.6px 0.5px rgba(85,80,68,0.5),
+    /* 3. Ambient groove depth — diffuse darkening around the letter */
+     0      0     1.5px  rgba(100,95,82,0.2),
+    /* 4. Hard highlight — lower-right groove lip, brightest */
+     0.7px  1px   0     rgba(255,255,253,0.9),
+    /* 5. Soft highlight — secondary glow on lip */
+     0.4px  0.5px 0.3px rgba(250,248,244,0.55);
 }
 
 /* Word wrapper — keeps letters together, wraps only at word boundaries */

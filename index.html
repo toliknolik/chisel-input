@@ -19,7 +19,9 @@
       <div class="marble-volume"><img src="assets/marble/volume.svg" alt=""></div>
       <!-- Layer 2b: Surface lighting — feDiffuseLighting + feSpecularLighting on turbulence bump map -->
       <div class="marble-light"></div>
-      <!-- Layer 2c: Chip edge stroke — same transform as volume, strokes the mask boundary -->
+      <!-- Layer 2d: Depth bevel — blurred slab mask as heightmap + diffuse/specular lighting for 3D edge -->
+      <div class="marble-depth"></div>
+      <!-- Layer 2e: Chip edge stroke — same transform as volume, strokes the mask boundary -->
       <div class="marble-chip-edge"></div>
       <!-- Layer 3: Surface cracks — rotated −60°, normal blend -->
       <div class="marble-cracks"><img src="assets/marble/cracks.svg" alt=""></div>
@@ -28,6 +30,8 @@
       <!-- Layer 4–5: Organic veins — position/rotation set by JS, multiply blend -->
       <div class="vein-wrap" id="vein-a"><img src="assets/marble/vein-a.svg" alt=""></div>
       <div class="vein-wrap" id="vein-b"><img src="assets/marble/vein-b.svg" alt=""></div>
+      <!-- Directional light hint — very subtle upper-left to lower-right gradient -->
+      <div class="marble-directional"></div>
       <!-- Text layer — position/width set by JS via computeSafeTextArea -->
       <div id="text-layer">
         <div id="carved-text"><span id="cursor"></span></div>

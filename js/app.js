@@ -224,6 +224,38 @@ function applySlabShape(slab) {
   edge.style.backgroundRepeat   = 'no-repeat';
   edge.style.backgroundPosition = '0 0';
 
+  // Depth bevel: blur the slab silhouette → heightmap → light for 3D rounded edges.
+  // Uses the same light direction as the surface lighting for consistency.
+  // The blur creates a distance-field-like falloff from edges; feDiffuseLighting
+  // converts that gradient into directional shading for the beveled-stone look.
+  const depth = document.querySelector('.marble-depth');
+  const depthBlur = 14;        // bevel width in px (narrower = sharper edge)
+  const depthSurfScale = 12;   // height of the bevel (higher = more dramatic)
+  const depthDiffK = 1.2;
+  const depthSpecK = 0.8;
+  const depthSpecExp = 15;
+  depth.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${slab.w}" height="${slab.h}" viewBox="0 0 ${slab.w} ${slab.h}" style="display:block">` +
+    `<defs><filter id="depth-bevel" x="-50%" y="-50%" width="200%" height="200%">` +
+      `<feGaussianBlur in="SourceGraphic" stdDeviation="${depthBlur}" result="dist"/>` +
+      // Steepen the gradient near edges: remap so the center plateau is flatter
+      // and the edge rolloff is more pronounced.
+      `<feComponentTransfer in="dist" result="steep">` +
+        `<feFuncR type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
+        `<feFuncG type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
+        `<feFuncB type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
+        `<feFuncA type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
+      `</feComponentTransfer>` +
+      `<feDiffuseLighting in="steep" surfaceScale="${depthSurfScale}" diffuseConstant="${depthDiffK}" lighting-color="#F8F1DF" result="diffuse">` +
+        `<feDistantLight azimuth="${lightParams.azimuth}" elevation="${lightParams.elevation}"/>` +
+      `</feDiffuseLighting>` +
+      `<feSpecularLighting in="steep" surfaceScale="${depthSurfScale}" specularConstant="${depthSpecK}" specularExponent="${depthSpecExp}" lighting-color="#FFFFFF" result="spec">` +
+        `<feDistantLight azimuth="${lightParams.azimuth}" elevation="${lightParams.elevation}"/>` +
+      `</feSpecularLighting>` +
+      `<feComposite in="spec" in2="diffuse" operator="arithmetic" k1="0" k2="1" k3="0.4" k4="0"/>` +
+    `</filter></defs>` +
+    `<path d="${slab.path}" fill="white" filter="url(#depth-bevel)"/>` +
+  `</svg>`;
+
   // Position text layer within the shape-aware safe area (20 px margin).
   // Pass chip geometry so text stays inside the volume layer, avoiding chipped corners.
   const chip = { vcx, vcy, volW, volH, maskX, maskY, angle: slab.volumeAngle };

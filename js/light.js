@@ -5,14 +5,14 @@
 export const lightParams = {
   baseFrequency:    0.045,
   numOctaves:       3,
-  diffuseSurface:   1.5,
-  diffuseConstant:  0.8,
-  specSurface:      1.0,
-  specConstant:     0.4,
-  specExponent:     20,
+  diffuseSurface:   2.0,
+  diffuseConstant:  1.0,
+  specSurface:      1.5,
+  specConstant:     0.5,
+  specExponent:     25,
   azimuth:          225,
-  elevation:        45,
-  opacity:          0.35,
+  elevation:        40,
+  opacity:          0.5,
   blendMode:        'soft-light',
 };
 
