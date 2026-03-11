@@ -14,7 +14,8 @@ const VOL_SCALE  = 1.30;  // volume div = 130 % of slab (room for the chip mask)
 // Worst-case slab dimensions (max w/h across all slabs × max stretch 1.06)
 const MAX_SLAB_W = 508 * 1.06;  // 539
 const MAX_SLAB_H = 497 * 1.06;  // 527
-const CHIP_SCALE = 1.15;  // mask slab path scaled up → bigger chip, smaller chipped corners
+const CHIP_BASE  = 1.15;  // minimum chip mask scale (at 0° rotation)
+const CHIP_ANGLE = 0.004; // extra scale per degree of rotation → bigger angles get bigger mask
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ function computeSafeTextArea(slab, padding, chip) {
     c2.scale(1, -1);
     c2.translate(-chip.volW / 2, -chip.volH / 2);
     c2.translate(chip.maskX, chip.maskY);
-    c2.scale(CHIP_SCALE, CHIP_SCALE);
+    c2.scale(currentSlab._chipScale, currentSlab._chipScale);
     c2.fill(new Path2D(slab.path));
     c2.restore();
     c2.globalCompositeOperation = 'source-over';
@@ -158,6 +159,13 @@ function applySlabShape(slab) {
   const transform = `rotate(${slabRotation}deg) scale(${slab.sx.toFixed(4)}, ${slab.sy.toFixed(4)})`;
   el.style.transform = transform;
 
+  // Slab outline stroke — outside clip-path so it's not clipped
+  const stroke = document.getElementById('slab-stroke');
+  stroke.style.width     = slab.w + 'px';
+  stroke.style.height    = slab.h + 'px';
+  stroke.style.transform = transform;
+  stroke.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${slab.w}" height="${slab.h}" viewBox="0 0 ${slab.w} ${slab.h}"><path d="${slab.path}" fill="none" stroke="#F8F8F6" stroke-width="1"/></svg>`;
+
   // Rotate the volume layer around the slab path's bounding-box center (not the
   // element's geometric center) so the chip appears centered on the actual rock shape.
   const { cx: vcx, cy: vcy } = getPathBBoxCenter(slab);
@@ -173,12 +181,14 @@ function applySlabShape(slab) {
   vol.style.marginTop  = `${-volH / 2}px`;
   vol.style.transform  = `rotate(${slab.volumeAngle}deg) scaleY(-1)`;
 
-  // CSS mask: slab path scaled by CHIP_SCALE and centered on the bbox center.
-  // Bigger CHIP_SCALE → rotated mask covers more of the outer slab → smaller corners.
-  const maskW = slab.w * CHIP_SCALE;
-  const maskH = slab.h * CHIP_SCALE;
-  const maskX = volW / 2 - vcx * CHIP_SCALE;
-  const maskY = volH / 2 - vcy * CHIP_SCALE;
+  // Chip scale adapts to rotation angle — higher angles need a bigger mask to
+  // keep the chipped corners small and consistent across slab variants.
+  const chipScale = CHIP_BASE + CHIP_ANGLE * Math.abs(slab.volumeAngle);
+  currentSlab._chipScale = chipScale;
+  const maskW = slab.w * chipScale;
+  const maskH = slab.h * chipScale;
+  const maskX = volW / 2 - vcx * chipScale;
+  const maskY = volH / 2 - vcy * chipScale;
   const svgMask = `<svg xmlns="http://www.w3.org/2000/svg" width="${slab.w}" height="${slab.h}" viewBox="0 0 ${slab.w} ${slab.h}"><path d="${slab.path}" fill="white"/></svg>`;
   const maskUrl = `url("data:image/svg+xml,${encodeURIComponent(svgMask)}")`;
   vol.style.webkitMaskImage    = maskUrl;
@@ -218,43 +228,11 @@ function applySlabShape(slab) {
   edge.style.marginLeft = `${-volW / 2}px`;
   edge.style.marginTop  = `${-volH / 2}px`;
   edge.style.transform  = `rotate(${slab.volumeAngle}deg) scaleY(-1)`;
-  const edgeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${volW}" height="${volH}" viewBox="0 0 ${volW} ${volH}"><path d="${slab.path}" transform="translate(${maskX},${maskY}) scale(${CHIP_SCALE})" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="0.7"/></svg>`;
+  const edgeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${volW}" height="${volH}" viewBox="0 0 ${volW} ${volH}"><path d="${slab.path}" transform="translate(${maskX},${maskY}) scale(${chipScale})" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="0.7"/></svg>`;
   edge.style.backgroundImage    = `url("data:image/svg+xml,${encodeURIComponent(edgeSvg)}")`;
   edge.style.backgroundSize     = `${volW}px ${volH}px`;
   edge.style.backgroundRepeat   = 'no-repeat';
   edge.style.backgroundPosition = '0 0';
-
-  // Depth bevel: blur the slab silhouette → heightmap → light for 3D rounded edges.
-  // Uses the same light direction as the surface lighting for consistency.
-  // The blur creates a distance-field-like falloff from edges; feDiffuseLighting
-  // converts that gradient into directional shading for the beveled-stone look.
-  const depth = document.querySelector('.marble-depth');
-  const depthBlur = 14;        // bevel width in px (narrower = sharper edge)
-  const depthSurfScale = 12;   // height of the bevel (higher = more dramatic)
-  const depthDiffK = 1.2;
-  const depthSpecK = 0.8;
-  const depthSpecExp = 15;
-  depth.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${slab.w}" height="${slab.h}" viewBox="0 0 ${slab.w} ${slab.h}" style="display:block">` +
-    `<defs><filter id="depth-bevel" x="-50%" y="-50%" width="200%" height="200%">` +
-      `<feGaussianBlur in="SourceGraphic" stdDeviation="${depthBlur}" result="dist"/>` +
-      // Steepen the gradient near edges: remap so the center plateau is flatter
-      // and the edge rolloff is more pronounced.
-      `<feComponentTransfer in="dist" result="steep">` +
-        `<feFuncR type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
-        `<feFuncG type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
-        `<feFuncB type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
-        `<feFuncA type="gamma" amplitude="1" exponent="0.5" offset="0"/>` +
-      `</feComponentTransfer>` +
-      `<feDiffuseLighting in="steep" surfaceScale="${depthSurfScale}" diffuseConstant="${depthDiffK}" lighting-color="#F8F1DF" result="diffuse">` +
-        `<feDistantLight azimuth="${lightParams.azimuth}" elevation="${lightParams.elevation}"/>` +
-      `</feDiffuseLighting>` +
-      `<feSpecularLighting in="steep" surfaceScale="${depthSurfScale}" specularConstant="${depthSpecK}" specularExponent="${depthSpecExp}" lighting-color="#FFFFFF" result="spec">` +
-        `<feDistantLight azimuth="${lightParams.azimuth}" elevation="${lightParams.elevation}"/>` +
-      `</feSpecularLighting>` +
-      `<feComposite in="spec" in2="diffuse" operator="arithmetic" k1="0" k2="1" k3="0.4" k4="0"/>` +
-    `</filter></defs>` +
-    `<path d="${slab.path}" fill="white" filter="url(#depth-bevel)"/>` +
-  `</svg>`;
 
   // Position text layer within the shape-aware safe area (20 px margin).
   // Pass chip geometry so text stays inside the volume layer, avoiding chipped corners.
@@ -288,7 +266,7 @@ function applySlabShape(slab) {
   // 4. Position the mask path within the volume layer
   const crackMaskSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${slab.w}" height="${slab.h}" viewBox="0 0 ${slab.w} ${slab.h}">` +
     `<g transform="translate(${vcx},${vcy}) rotate(${slab.volumeAngle}) scale(1,-1) translate(${-volW/2},${-volH/2})">` +
-    `<path d="${slab.path}" transform="translate(${maskX},${maskY}) scale(${CHIP_SCALE})" fill="white"/>` +
+    `<path d="${slab.path}" transform="translate(${maskX},${maskY}) scale(${chipScale})" fill="white"/>` +
     `</g></svg>`;
   const crackMaskUrl = `url("data:image/svg+xml,${encodeURIComponent(crackMaskSvg)}")`;
   crackOverlay.style.webkitMaskImage = crackMaskUrl;
@@ -753,8 +731,10 @@ function destroySlab() {
   emitCrumble(currentSlab);
   setTimeout(triggerCrumbleCloud, 200);
 
-  // Hide original slab + controls immediately
+  // Hide original slab + stroke + controls immediately
+  const strokeEl = document.getElementById('slab-stroke');
   slabEl.style.opacity = '0';
+  strokeEl.style.opacity = '0';
   controls.style.opacity = '0';
   controls.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, easing: 'ease' });
 
@@ -784,6 +764,10 @@ function destroySlab() {
       [{ opacity: 0 }, { opacity: 1 }],
       { duration: 1200, easing: 'ease-out', fill: 'forwards' },
     );
+    const fadeInStroke = strokeEl.animate(
+      [{ opacity: 0 }, { opacity: 1 }],
+      { duration: 1200, easing: 'ease-out', fill: 'forwards' },
+    );
     const fadeInCtrl = controls.animate(
       [{ opacity: 0 }, { opacity: 1 }],
       { duration: 1200, easing: 'ease-out', fill: 'forwards' },
@@ -792,6 +776,10 @@ function destroySlab() {
       slabEl.style.opacity = '1';
       fadeIn.cancel();
       destroying = false;
+    };
+    fadeInStroke.onfinish = () => {
+      strokeEl.style.opacity = '1';
+      fadeInStroke.cancel();
     };
     fadeInCtrl.onfinish = () => {
       controls.style.opacity = '1';
@@ -952,10 +940,11 @@ async function eternalize() {
   ctx.drawImage(imgBase, 0, 0, sw, sh);
 
   // 2. Volume layer — rotated per-slab angle, y-flipped, normal blend.
-  //    Replicates the CSS chip with CHIP_SCALE for the mask path.
+  //    Replicates the CSS chip with adaptive chipScale for the mask path.
   const imgVol = document.querySelector('.marble-volume img');
   const cx = currentSlab._bboxCx;
   const cy = currentSlab._bboxCy;
+  const cs = currentSlab._chipScale;
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(currentSlab.volumeAngle * Math.PI / 180);
@@ -963,12 +952,12 @@ async function eternalize() {
   ctx.globalAlpha = 1;
   const volW = sw * VOL_SCALE, volH = sh * VOL_SCALE;
   ctx.translate(-volW / 2, -volH / 2);
-  const cMaskX = volW / 2 - cx * CHIP_SCALE;
-  const cMaskY = volH / 2 - cy * CHIP_SCALE;
+  const cMaskX = volW / 2 - cx * cs;
+  const cMaskY = volH / 2 - cy * cs;
   // Build a scaled chip clip path matching the CSS mask
   const chipPath = new Path2D();
   chipPath.addPath(new Path2D(currentSlab.path),
-    new DOMMatrix().translate(cMaskX, cMaskY).scale(CHIP_SCALE, CHIP_SCALE));
+    new DOMMatrix().translate(cMaskX, cMaskY).scale(cs, cs));
   ctx.save();
   ctx.clip(chipPath);
   ctx.drawImage(imgVol, 0, 0, volW, volH);

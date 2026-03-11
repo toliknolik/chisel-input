@@ -8,7 +8,7 @@ import { getCloudGL, requestRender, registerParticleRenderer, onGLResize } from 
 // ── Tunable parameters (read by sidebar) ─────────────────────────────────────
 export const particleParams = {
   // Physics
-  gravity:   0.12,
+  gravity:   0.45,
   drag:      0.98,
   // Chisel dust
   dustMin:   16,

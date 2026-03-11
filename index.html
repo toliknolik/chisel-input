@@ -19,8 +19,6 @@
       <div class="marble-volume"><img src="assets/marble/volume.svg" alt=""></div>
       <!-- Layer 2b: Surface lighting — feDiffuseLighting + feSpecularLighting on turbulence bump map -->
       <div class="marble-light"></div>
-      <!-- Layer 2d: Depth bevel — blurred slab mask as heightmap + diffuse/specular lighting for 3D edge -->
-      <div class="marble-depth"></div>
       <!-- Layer 2e: Chip edge stroke — same transform as volume, strokes the mask boundary -->
       <div class="marble-chip-edge"></div>
       <!-- Layer 3: Surface cracks — rotated −60°, normal blend -->
@@ -37,6 +35,7 @@
         <div id="carved-text"><span id="cursor"></span></div>
       </div>
     </div>
+    <div id="slab-stroke"></div>
     <div id="controls">
       <button id="btn-destroy">[start again]</button>
       <button id="btn-eternalize">[share]</button>
