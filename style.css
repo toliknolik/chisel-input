@@ -260,6 +260,11 @@ body {
   white-space: nowrap;
 }
 
+/* Applied by JS when a word exceeds the character limit */
+.word.break-word {
+  white-space: normal;
+}
+
 /* Each carved letter */
 .letter {
   display: inline-block;
@@ -279,11 +284,11 @@ body {
   height: 1.1em;
   background: var(--text-color);
   opacity: 0.5;
-  vertical-align: baseline;
+  vertical-align: top;
   margin-left: 2px;
-  animation: blink 1.1s step-end infinite;
   position: relative;
-  top: 3px;
+  top: 0px;
+  animation: blink 1.1s step-end infinite;
 }
 
 @keyframes blink {

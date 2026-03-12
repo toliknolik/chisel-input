@@ -10,6 +10,10 @@ const DELAY_MIN  = 250;
 const DELAY_MAX  = 500;
 const MAX_CHARS  = 100;
 const VOL_SCALE  = 1.30;  // volume div = 130 % of slab (room for the chip mask)
+const BASE_FONT  = 30;
+const WORD_BREAK_LIMIT = 12; // chars before a word gets character-level wrapping
+const MIN_FONT   = 14;
+let   currentFontSize = BASE_FONT;
 
 // Worst-case slab dimensions (max w/h across all slabs × max stretch 1.06)
 const MAX_SLAB_W = 508 * 1.06;  // 539
@@ -26,9 +30,10 @@ let audioCtx     = null;
 let slabRotation = 0;
 let currentSlab  = null;
 let currentSafe  = null; // shape-aware text bounding box
-let crackCount   = 0;
-let usedEdges    = []; // track which edges (0-3) have been used for crack distribution
-const MAX_CRACKS = 4;
+let crackCount      = 0;
+let crackDirection  = 0;   // dominant angle in radians, set per slab
+let existingCracks  = [];  // array of polylines (each is [[x,y], ...])
+const MAX_CRACKS    = 4;
 
 // lightParams imported from light.js (shared with sidebar)
 
@@ -47,6 +52,7 @@ function init() {
   updateSceneZoom();
   window.addEventListener('resize', updateSceneZoom);
   currentSlab = pickSlab();
+  crackDirection = (20 + Math.random() * 50) * Math.PI / 180; // 20-70° from horizontal
   applySlabShape(currentSlab);
   applyVeins(currentSlab);
   document.addEventListener('keydown', onKeyDown);
@@ -243,14 +249,15 @@ function applySlabShape(slab) {
   const ct = document.getElementById('carved-text');
   ct.style.width = currentSafe.w + 'px';
   // Position text within safe area — center both vertically and horizontally.
-  // Use symmetric horizontal padding (max of left/right) so text looks visually centered.
+  // Use symmetric padding (max of each axis) so text looks visually centered on the slab.
   const safeTop = currentSafe.cy - currentSafe.h / 2;
   const safeBottom = slab.h - (currentSafe.cy + currentSafe.h / 2);
   const safeLeft = currentSafe.cx - currentSafe.w / 2;
   const safeRight = slab.w - (currentSafe.cx + currentSafe.w / 2);
+  const safeV = Math.max(safeTop, safeBottom);
   const safeH = Math.max(safeLeft, safeRight);
-  tl.style.paddingTop = safeTop + 'px';
-  tl.style.paddingBottom = safeBottom + 'px';
+  tl.style.paddingTop = safeV + 'px';
+  tl.style.paddingBottom = safeV + 'px';
   tl.style.paddingLeft = safeH + 'px';
   tl.style.paddingRight = safeH + 'px';
 
@@ -273,6 +280,15 @@ function applySlabShape(slab) {
   crackOverlay.style.maskImage       = crackMaskUrl;
   crackOverlay.style.webkitMaskSize  = `${slab.w}px ${slab.h}px`;
   crackOverlay.style.maskSize        = `${slab.w}px ${slab.h}px`;
+
+  // Mask the slab stroke so it doesn't appear in the chipped corner area
+  // (avoids visible gap between stroke and chip edge).
+  stroke.style.webkitMaskImage    = crackMaskUrl;
+  stroke.style.maskImage          = crackMaskUrl;
+  stroke.style.webkitMaskSize     = `${slab.w}px ${slab.h}px`;
+  stroke.style.maskSize           = `${slab.w}px ${slab.h}px`;
+  stroke.style.webkitMaskRepeat   = 'no-repeat';
+  stroke.style.maskRepeat         = 'no-repeat';
 
   // Mask the text through the marble base texture so it looks carved into stone.
   // text-layer covers the full slab, so mask offset is (0, 0).
@@ -412,14 +428,27 @@ function getOrCreateWord(container) {
 function isTextOverflowing() {
   const container = document.getElementById('carved-text');
   const tl = document.getElementById('text-layer');
-  // Available height = text-layer height minus top and bottom padding
   const style = getComputedStyle(tl);
   const available = tl.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-  // Tolerance accounts for line-height leading below the last baseline
   const fontSize = parseFloat(getComputedStyle(container).fontSize);
   const lineHeight = parseFloat(getComputedStyle(container).lineHeight);
   const leading = lineHeight - fontSize;
   return container.scrollHeight > available + leading;
+}
+
+function applyFontSize(size) {
+  currentFontSize = size;
+  const container = document.getElementById('carved-text');
+  container.style.fontSize = size + 'px';
+  container.style.letterSpacing = (1.8 * size / BASE_FONT).toFixed(1) + 'px';
+}
+
+// Try shrinking font to fit; returns true if text fits, false if at minimum and still overflows
+function shrinkToFit() {
+  while (isTextOverflowing() && currentFontSize > MIN_FONT) {
+    applyFontSize(currentFontSize - 1);
+  }
+  return !isTextOverflowing();
 }
 
 function carveCharacter(ch) {
@@ -433,7 +462,7 @@ function carveCharacter(ch) {
     } else {
       container.appendChild(spaceNode);
     }
-    if (isTextOverflowing()) {
+    if (!shrinkToFit()) {
       container.removeChild(spaceNode);
       keyQueue.length = 0;
       return;
@@ -454,9 +483,12 @@ function carveCharacter(ch) {
 
   word.appendChild(span);
 
-  if (isTextOverflowing()) {
+  // Allow character-level wrapping when a word exceeds the limit
+  const letterCount = word.querySelectorAll('.letter').length;
+  if (letterCount > WORD_BREAK_LIMIT) word.classList.add('break-word');
+
+  if (!shrinkToFit()) {
     span.remove();
-    // Remove empty word wrapper if it was just created
     if (word.childNodes.length === 0) word.remove();
     keyQueue.length = 0;
     return;
@@ -527,47 +559,46 @@ function addCrack() {
     return;
   }
 
-  const severity = crackCount; // 1 or 2
+  const severity = crackCount;
   const overlay = document.getElementById('crack-overlay');
   const w = currentSlab.w;
   const h = currentSlab.h;
-  const numCracks = 2 + Math.floor(Math.random() * 2); // 2-3 cracks per keystroke
 
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('fill', 'none');
+
+  // Generate one spine per backspace, mostly parallel to crackDirection
+  const spine = generateCrackSpine(w, h, severity);
+  const branches = generateBranches(spine, w, h, severity);
+  const allPaths = [spine, ...branches];
   const allAnimTargets = [];
 
-  for (let ci = 0; ci < numCracks; ci++) {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-    svg.setAttribute('fill', 'none');
+  for (let pi = 0; pi < allPaths.length; pi++) {
+    const pts = allPaths[pi];
+    const d = pointsToSvgPath(pts);
+    const isBranch = pi > 0;
 
-    const spine = generateCrackSpine(w, h, severity);
-    const branches = generateBranches(spine, w, h, severity);
-    const allPaths = [spine, ...branches];
+    const strokeW = isBranch ? [0, 0.35, 0.42, 0.5][severity] : [0, 0.45, 0.6, 0.7][severity];
+    const opacity = isBranch ? [0, 0.09, 0.12, 0.15][severity] : [0, 0.13, 0.17, 0.21][severity];
 
-    for (let pi = 0; pi < allPaths.length; pi++) {
-      const pts = allPaths[pi];
-      const d = pointsToSvgPath(pts);
-      const isBranch = pi > 0;
-
-      const strokeW = isBranch ? [0, 0.3, 0.38, 0.45][severity] : [0, 0.4, 0.55, 0.65][severity];
-      const opacity = isBranch ? [0, 0.08, 0.11, 0.14][severity] : [0, 0.12, 0.16, 0.2][severity];
-
-      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      p.setAttribute('d', d);
-      p.setAttribute('stroke', `rgba(90,85,80,${opacity})`);
-      p.setAttribute('stroke-width', String(strokeW));
-      p.setAttribute('stroke-linecap', 'round');
-      p.setAttribute('stroke-linejoin', 'round');
-      svg.appendChild(p);
-      // Stagger each crack slightly so they don't all appear at once
-      const baseDelay = ci * 80;
-      allAnimTargets.push({ el: p, delay: baseDelay + (isBranch ? 60 + pi * 25 : 0) });
-    }
-
-    overlay.appendChild(svg);
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('stroke', `rgba(90,85,80,${opacity})`);
+    p.setAttribute('stroke-width', String(strokeW));
+    p.setAttribute('stroke-linecap', 'round');
+    p.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(p);
+    allAnimTargets.push({ el: p, delay: isBranch ? 80 + pi * 30 : 0 });
   }
 
-  // Animate all paths growing
+  overlay.appendChild(svg);
+
+  // Store spine + branches for anti-crossing checks
+  existingCracks.push(spine);
+  for (const b of branches) existingCracks.push(b);
+
+  // Animate paths growing
   requestAnimationFrame(() => {
     for (const { el, delay } of allAnimTargets) {
       const len = el.getTotalLength();
@@ -581,91 +612,158 @@ function addCrack() {
   });
 }
 
-// Generate crack spine — edge-to-edge across the slab
+// ── Segment intersection check ───────────────────────────────────────────────
+
+function segmentsIntersect(a1, a2, b1, b2) {
+  const d1x = a2[0] - a1[0], d1y = a2[1] - a1[1];
+  const d2x = b2[0] - b1[0], d2y = b2[1] - b1[1];
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 1e-8) return false; // parallel
+  const dx = b1[0] - a1[0], dy = b1[1] - a1[1];
+  const t = (dx * d2y - dy * d2x) / cross;
+  const u = (dx * d1y - dy * d1x) / cross;
+  return t > 0.01 && t < 0.99 && u > 0.01 && u < 0.99;
+}
+
+function polylineCrossesExisting(pts) {
+  for (let i = 0; i < pts.length - 1; i++) {
+    for (const existing of existingCracks) {
+      for (let j = 0; j < existing.length - 1; j++) {
+        if (segmentsIntersect(pts[i], pts[i + 1], existing[j], existing[j + 1])) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ── Generate crack spine — parallel to dominant direction ─────────────────────
+
 function generateCrackSpine(w, h, severity) {
-  // Prefer edges not yet used for better spatial distribution
-  const allEdges = [0, 1, 2, 3];
-  const unused = allEdges.filter(e => !usedEdges.includes(e));
-  const pool = unused.length > 0 ? unused : allEdges;
-  const startEdge = pool[Math.floor(Math.random() * pool.length)];
-  usedEdges.push(startEdge);
+  const angle = crackDirection + (Math.random() - 0.5) * 0.23; // ±~6-7°
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  const perpX = -dy, perpY = dx;
 
-  // End on opposite edge (70%) or adjacent edge (30%) for variety
-  const opposite = (startEdge + 2) % 4;
-  const adjacent = Math.random() > 0.5 ? (startEdge + 1) % 4 : (startEdge + 3) % 4;
-  const endEdge = Math.random() < 0.7 ? opposite : adjacent;
+  // Space cracks apart perpendicular to the direction
+  const diag = Math.sqrt(w * w + h * h);
+  // Spread cracks across the slab: offset from center line
+  const spread = diag * 0.6;
+  const n = existingCracks.length;
+  // Distribute offsets: alternate sides of center, growing outward
+  const offsets = [0, -0.3, 0.3, -0.6, 0.6, -0.15, 0.15];
+  const offsetFrac = n < offsets.length ? offsets[n] : (Math.random() - 0.5);
+  const perpOffset = offsetFrac * spread + (Math.random() - 0.5) * 20;
 
-  const edgePoint = (edge, w, h) => {
-    if (edge === 0) return [w * (0.15 + Math.random() * 0.7), 0];
-    if (edge === 1) return [w, h * (0.15 + Math.random() * 0.7)];
-    if (edge === 2) return [w * (0.15 + Math.random() * 0.7), h];
-    return [0, h * (0.15 + Math.random() * 0.7)];
+  // Center of the slab
+  const cx = w / 2 + perpX * perpOffset;
+  const cy = h / 2 + perpY * perpOffset;
+
+  // Extend ray in both directions from center until hitting slab bounds
+  const rayHitEdge = (ox, oy, rdx, rdy) => {
+    let tMin = Infinity;
+    // Check 4 slab edges
+    if (Math.abs(rdx) > 1e-6) {
+      const t0 = -ox / rdx;       // left edge (x=0)
+      const t1 = (w - ox) / rdx;  // right edge (x=w)
+      if (t0 > 0) tMin = Math.min(tMin, t0);
+      if (t1 > 0) tMin = Math.min(tMin, t1);
+    }
+    if (Math.abs(rdy) > 1e-6) {
+      const t2 = -oy / rdy;       // top edge (y=0)
+      const t3 = (h - oy) / rdy;  // bottom edge (y=h)
+      if (t2 > 0) tMin = Math.min(tMin, t2);
+      if (t3 > 0) tMin = Math.min(tMin, t3);
+    }
+    return tMin === Infinity ? 100 : tMin;
   };
 
-  let [sx, sy] = edgePoint(startEdge, w, h);
-  let [ex, ey] = edgePoint(endEdge, w, h);
+  const tFwd = rayHitEdge(cx, cy, dx, dy);
+  const tBwd = rayHitEdge(cx, cy, -dx, -dy);
 
-  // Mostly straight with very subtle lateral drift
+  const sx = cx - dx * tBwd * 0.98, sy = cy - dy * tBwd * 0.98;
+  const ex = cx + dx * tFwd * 0.98, ey = cy + dy * tFwd * 0.98;
+
+  // Build polyline with subtle organic drift
   const segments = 20 + Math.floor(Math.random() * 10);
   const points = [[sx, sy]];
-
   const mdx = ex - sx, mdy = ey - sy;
   const mLen = Math.sqrt(mdx * mdx + mdy * mdy) || 1;
-  const perpX = -mdy / mLen, perpY = mdx / mLen;
+  const pX = -mdy / mLen, pY = mdx / mLen;
 
   let drift = 0;
   for (let i = 1; i <= segments; i++) {
     const t = i / segments;
-    drift += (Math.random() - 0.5) * [0, 2.5, 3.5, 4.5][severity];
-    drift *= 0.95;
-    points.push([sx + mdx * t + perpX * drift, sy + mdy * t + perpY * drift]);
+    drift += (Math.random() - 0.5) * [0, 2.5, 3, 3.5][severity];
+    drift *= 0.94;
+    points.push([sx + mdx * t + pX * drift, sy + mdy * t + pY * drift]);
   }
+
+  // Anti-crossing: retry with slight perpendicular shift if crossing detected
+  if (polylineCrossesExisting(points)) {
+    const shift = 15 + Math.random() * 15;
+    const side = Math.random() > 0.5 ? 1 : -1;
+    for (let i = 0; i < points.length; i++) {
+      points[i][0] += perpX * shift * side;
+      points[i][1] += perpY * shift * side;
+    }
+  }
+
   return points;
 }
 
-// Generate branch offshoots at acute angles (15-35°) like real stone
+// ── Generate 0-2 long branches at acute angles ──────────────────────────────
+
 function generateBranches(spine, w, h, severity) {
   const branches = [];
-  const numBranches = severity === 1
-    ? 3 + Math.floor(Math.random() * 3)
-    : 5 + Math.floor(Math.random() * 4);
+  const numBranches = severity <= 1
+    ? Math.floor(Math.random() * 2)       // 0-1
+    : 1 + Math.floor(Math.random() * 2);  // 1-2
+
+  // Spine total length for proportional branch length
+  let spineLen = 0;
+  for (let i = 1; i < spine.length; i++) {
+    const dx = spine[i][0] - spine[i - 1][0], dy = spine[i][1] - spine[i - 1][1];
+    spineLen += Math.sqrt(dx * dx + dy * dy);
+  }
 
   for (let b = 0; b < numBranches; b++) {
-    // Pick a point along the spine (avoid very start/end)
-    const idx = 2 + Math.floor(Math.random() * (spine.length - 4));
+    // Pick a point along the spine (20-80% range)
+    const idx = Math.floor(spine.length * (0.2 + Math.random() * 0.6));
     const [bx, by] = spine[idx];
 
     // Get spine direction at this point
     const prev = spine[Math.max(0, idx - 1)];
     const next = spine[Math.min(spine.length - 1, idx + 1)];
-    const sdx = next[0] - prev[0];
-    const sdy = next[1] - prev[1];
+    const sdx = next[0] - prev[0], sdy = next[1] - prev[1];
     const sLen = Math.sqrt(sdx * sdx + sdy * sdy) || 1;
 
-    // Branch at acute angle (15-35°) from spine direction, randomly left or right
-    const angle = (15 + Math.random() * 20) * Math.PI / 180;
+    // Branch at acute angle (10-25°) from spine direction
+    const angle = (10 + Math.random() * 15) * Math.PI / 180;
     const side = Math.random() > 0.5 ? 1 : -1;
-    const cos = Math.cos(side * angle);
-    const sin = Math.sin(side * angle);
-    // Rotate spine direction by the angle
+    const cos = Math.cos(side * angle), sin = Math.sin(side * angle);
     const bdx = (sdx / sLen) * cos - (sdy / sLen) * sin;
     const bdy = (sdx / sLen) * sin + (sdy / sLen) * cos;
 
-    // Branch length
-    const branchLen = (severity === 1 ? 20 : 35) + Math.random() * 30;
-    const steps = 4 + Math.floor(Math.random() * 4);
+    // Long branch: 40-80% of spine length
+    const branchLen = spineLen * (0.4 + Math.random() * 0.4);
+    const steps = 10 + Math.floor(Math.random() * 6);
     const pts = [[bx, by]];
 
+    let bDrift = 0;
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
-      // Small angular jitter within the branch
-      const jitter = (1 - t) * 3;
+      bDrift += (Math.random() - 0.5) * 1.5;
+      bDrift *= 0.93;
+      const perpBx = -bdy, perpBy = bdx;
       pts.push([
-        bx + bdx * branchLen * t + (Math.random() - 0.5) * jitter,
-        by + bdy * branchLen * t + (Math.random() - 0.5) * jitter,
+        bx + bdx * branchLen * t + perpBx * bDrift,
+        by + bdy * branchLen * t + perpBy * bDrift,
       ]);
     }
-    branches.push(pts);
+
+    // Skip branch if it crosses existing cracks
+    if (!polylineCrossesExisting(pts)) {
+      branches.push(pts);
+    }
   }
   return branches;
 }
@@ -749,7 +847,9 @@ function destroySlab() {
     document.getElementById('crack-overlay').innerHTML = '';
     charCount  = 0;
     crackCount = 0;
-    usedEdges  = [];
+    applyFontSize(BASE_FONT);
+    existingCracks = [];
+    crackDirection = (20 + Math.random() * 50) * Math.PI / 180;
     keyQueue   = [];
     isCarving  = false;
 
@@ -1015,12 +1115,12 @@ async function eternalize() {
     const textEl = document.getElementById('carved-text');
     const text   = textEl.innerText.replace(/\n/g, ' ').trim();
     if (text) {
-      const fontSize = Math.round(30 * scale);
+      const fontSize = Math.round(currentFontSize * scale);
       ctx.font         = `${fontSize}px 'Cinzel', serif`;
       ctx.fillStyle    = '#d3d5cc';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
-      ctx.letterSpacing = `${Math.round(1.8 * scale)}px`;
+      ctx.letterSpacing = `${(1.8 * currentFontSize / BASE_FONT * scale).toFixed(1)}px`;
       const maxWidth = currentSafe.w * scale;
       const lineH    = fontSize * 1.25;
       const lines    = wrapText(ctx, text.toUpperCase(), maxWidth);
