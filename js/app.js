@@ -907,8 +907,10 @@ function preloadAudio(url) {
     });
 }
 let skipBuffer = null;
+let destroyBuffer = null;
 preloadAudio('assets/crack.mp3').then(b => { crackBuffer = b; }).catch(() => {});
 preloadAudio('assets/new_slab.mp3').then(b => { newSlabBuffer = b; }).catch(() => {});
+preloadAudio('assets/destroy.mp3').then(b => { destroyBuffer = b; }).catch(() => {});
 preloadAudio('assets/skip.mp3').then(b => { skipBuffer = b; }).catch(() => {});
 
 function playCrack() {
@@ -950,6 +952,17 @@ function playSkip() {
   src.start();
 }
 
+function playDestroy() {
+  if (!audioCtx || !destroyBuffer) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = destroyBuffer;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.6;
+  src.connect(gain);
+  gain.connect(audioCtx.destination);
+  src.start();
+}
+
 // ── Destroy slab ──────────────────────────────────────────────────────────────
 
 const FRACTURE_MS = 1100;
@@ -961,6 +974,7 @@ function destroySlab() {
   if (destroying) return;
   destroying = true;
 
+  playDestroy();
   emitCrumble(currentSlab);
   emitFractureDust(crackSpines);
   setTimeout(triggerCrumbleCloud, 200);
@@ -1139,23 +1153,20 @@ function animateFragments(fragments, slab) {
 function generateCrackPolygons(w, h) {
   const pad = 60; // extend beyond slab so only the slab's own clip-path is the edge
 
-  // Use actual crack spines if available, else generate random fallback lines
+  // Use actual crack spines if available, else generate using crack spine logic
   let lines;
   if (crackSpines.length > 0) {
     lines = crackSpines.slice();
   } else {
-    // Fallback: generate 1-2 random crack lines
-    const makeLine = (xC) => {
-      const pts = [];
-      const steps = 3 + Math.floor(Math.random() * 3);
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        pts.push([xC + (Math.random() - 0.5) * w * 0.14, t * h]);
-      }
-      return pts;
-    };
-    lines = [makeLine(w * (0.35 + Math.random() * 0.3))];
-    if (Math.random() > 0.4) lines.push(makeLine(w * (0.6 + Math.random() * 0.2)));
+    // Fallback: generate 1-2 spines using the same diagonal logic as backspace cracks
+    const count = Math.random() > 0.4 ? 2 : 1;
+    lines = [];
+    for (let i = 0; i < count; i++) {
+      const spine = generateCrackSpine(w, h, i + 1);
+      lines.push(spine);
+      existingCracks.push(spine); // so anti-crossing works for 2nd line
+    }
+    existingCracks = []; // clean up temp state
   }
 
   // Sort spines by perpendicular offset from dominant crack direction
