@@ -248,6 +248,49 @@ export function emitCrumble(slab) {
   requestRender();
 }
 
+export function emitFractureDust(spines) {
+  const pp = particleParams;
+  // Emit dust along each crack spine with a staggered delay
+  for (let si = 0; si < spines.length; si++) {
+    const spine = spines[si];
+    const delay = si * 150; // stagger per spine
+
+    setTimeout(() => {
+      // Walk along spine, emit particles at intervals
+      for (let i = 0; i < spine.length - 1; i++) {
+        const [x1, y1] = spine[i];
+        const [x2, y2] = spine[i + 1];
+        const segLen = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+        const steps = Math.max(2, Math.floor(segLen / 8)); // particle every ~8px
+
+        for (let s = 0; s < steps; s++) {
+          const t = s / steps;
+          const px = x1 + (x2 - x1) * t + (Math.random() - 0.5) * 6;
+          const py = y1 + (y2 - y1) * t + (Math.random() - 0.5) * 6;
+
+          // Perpendicular burst away from crack line
+          const dx = x2 - x1, dy = y2 - y1;
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          const nx = -dy / len, ny = dx / len;
+          const side = Math.random() < 0.5 ? 1 : -1;
+          const burst = 1.5 + Math.random() * 2.5;
+
+          const p = makeParticle(
+            px, py,
+            nx * side * burst + (Math.random() - 0.5) * 1.5,
+            ny * side * burst - Math.random() * 1.5, // slight upward bias
+            pp.chipSize * (0.8 + Math.random() * 1.2),
+            pp.chipAlpha * (0.6 + Math.random() * 0.4),
+            pp.chipDecay * 1.2,
+          );
+          particles.push(p);
+        }
+      }
+      requestRender();
+    }, delay);
+  }
+}
+
 export function clearParticles() {
   particles.length = 0;
 }

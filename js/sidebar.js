@@ -86,6 +86,7 @@ const GROUPS = [
     group: 'Aging',
     params: ageParams,
     controls: [
+      { id: 'enabled',   label: 'Enable',     type: 'toggle' },
       { section: 'Time' },
       { id: 'speed',     label: 'Speed',      min: 0.1, max: 10, step: 0.1 },
       { id: 'duration',  label: 'Duration',   min: 10, max: 120, step: 5, unit: 's' },
@@ -111,7 +112,18 @@ export function initSidebar() {
 
       const val = g.params[c.id];
 
-      if (c.type === 'select') {
+      if (c.type === 'toggle') {
+        groupContent += `
+          <div class="sb-row">
+            <div class="sb-label">
+              <span>${c.label}</span>
+            </div>
+            <label class="sb-toggle">
+              <input type="checkbox" id="ctrl-${g.group}-${c.id}"${val ? ' checked' : ''}>
+              <span class="sb-toggle-track"></span>
+            </label>
+          </div>`;
+      } else if (c.type === 'select') {
         // Dropdown select
         const opts = c.options.map(o =>
           `<option value="${o}"${o === val ? ' selected' : ''}>${o}</option>`
@@ -167,7 +179,12 @@ export function initSidebar() {
       if (c.section) continue;
       const el = document.getElementById(`ctrl-${g.group}-${c.id}`);
 
-      if (c.type === 'select') {
+      if (c.type === 'toggle') {
+        el.addEventListener('change', () => {
+          g.params[c.id] = el.checked;
+          if (g.onChange) g.onChange();
+        });
+      } else if (c.type === 'select') {
         el.addEventListener('change', () => {
           g.params[c.id] = el.value;
           if (g.onChange) g.onChange();

@@ -500,6 +500,40 @@ body {
   border: none;
 }
 
+.sb-toggle {
+  position: relative;
+  display: inline-block;
+  width: 28px;
+  height: 14px;
+  cursor: pointer;
+}
+.sb-toggle input { display: none; }
+.sb-toggle-track {
+  position: absolute;
+  inset: 0;
+  background: #2a2720;
+  border-radius: 7px;
+  transition: background 0.2s;
+}
+.sb-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  background: #5a5445;
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.sb-toggle input:checked + .sb-toggle-track {
+  background: #3a3520;
+}
+.sb-toggle input:checked + .sb-toggle-track::after {
+  transform: translateX(14px);
+  background: #c8a96e;
+}
+
 #sidebar select {
   width: 100%;
   background: #1e1c17;

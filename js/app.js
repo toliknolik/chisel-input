@@ -1,5 +1,5 @@
 import { SLABS } from './slabs.js';
-import { initParticles, resizeParticles, emitChiselDust, emitCrumble, clearParticles } from './particles.js';
+import { initParticles, resizeParticles, emitChiselDust, emitCrumble, emitFractureDust, clearParticles } from './particles.js';
 import { initCloud, triggerCrumbleCloud, triggerRevealCloud } from './cloud.js';
 import { initSidebar } from './sidebar.js';
 import { lightParams, setUpdateLighting } from './light.js';
@@ -34,6 +34,7 @@ let currentSafe  = null; // shape-aware text bounding box
 let crackCount      = 0;
 let crackDirection  = 0;   // dominant angle in radians, set per slab
 let existingCracks  = [];  // array of polylines (each is [[x,y], ...])
+let crackSpines     = [];  // just the edge-to-edge spines (for fracture)
 const MAX_CRACKS    = 4;
 let ageLevel        = 0;   // 0 (fresh) to 1 (fully aged)
 let lastTypeTime    = 0;   // timestamp of last keystroke
@@ -73,7 +74,7 @@ function startAgingLoop() {
   function tick(now) {
     const dt = (now - lastFrame) / 1000;
     lastFrame = now;
-    if (Date.now() - lastTypeTime > ageParams.idleDelay * 1000 && ageLevel < 1 && !destroying) {
+    if (ageParams.enabled && Date.now() - lastTypeTime > ageParams.idleDelay * 1000 && ageLevel < 1 && !destroying) {
       ageLevel = Math.min(1, ageLevel + dt * ageParams.speed / ageParams.duration);
       updateAgeVisuals();
     }
@@ -708,6 +709,7 @@ function addCrack() {
   overlay.appendChild(svg);
 
   // Store spine + branches for anti-crossing checks
+  crackSpines.push(spine);
   existingCracks.push(spine);
   for (const b of branches) existingCracks.push(b);
 
@@ -950,7 +952,7 @@ function playSkip() {
 
 // ── Destroy slab ──────────────────────────────────────────────────────────────
 
-const FRACTURE_MS = 900;
+const FRACTURE_MS = 1100;
 let destroying = false;
 
 function destroySlab() {
@@ -960,30 +962,37 @@ function destroySlab() {
   destroying = true;
 
   emitCrumble(currentSlab);
+  emitFractureDust(crackSpines);
   setTimeout(triggerCrumbleCloud, 200);
 
-  // Hide original slab + stroke + moss + controls immediately
+  // Capture position BEFORE hiding (offsetLeft/Top need visible element)
   const strokeEl = document.getElementById('slab-stroke');
   const mossOuter = document.querySelector('.marble-moss');
+
+  // Launch fracture BEFORE hiding — needs layout info
+  fractureSlab(slabEl, currentSlab);
+
+  // Now hide original slab + stroke + moss + crack overlay + controls
   slabEl.style.opacity = '0';
   strokeEl.style.opacity = '0';
   if (mossOuter) mossOuter.style.opacity = '0';
+  document.getElementById('crack-overlay').style.opacity = '0';
   controls.style.opacity = '0';
   controls.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, easing: 'ease' });
-
-  // Launch fracture — slab breaks into falling pieces
-  fractureSlab(slabEl, currentSlab);
 
   setTimeout(() => {
     const ct = document.getElementById('carved-text');
     const cur = document.getElementById('cursor');
     ct.innerHTML = '';
     if (cur) ct.appendChild(cur);
-    document.getElementById('crack-overlay').innerHTML = '';
+    const crackOv = document.getElementById('crack-overlay');
+    crackOv.innerHTML = '';
+    crackOv.style.opacity = '1';
     charCount  = 0;
     crackCount = 0;
     applyFontSize(BASE_FONT);
     existingCracks = [];
+    crackSpines = [];
     crackDirection = (20 + Math.random() * 50) * Math.PI / 180;
     resetAge();
     keyQueue   = [];
@@ -1022,15 +1031,25 @@ function destroySlab() {
       controls.style.opacity = '1';
       fadeInCtrl.cancel();
     };
-  }, FRACTURE_MS);
+  }, FRACTURE_MS + 800); // extra time for staggered fragment falls
 }
 
 // ── Slab fracture ────────────────────────────────────────────────────────────
 
+function polyArea(pts) {
+  let area = 0;
+  for (let i = 0, n = pts.length; i < n; i++) {
+    const [x1, y1] = Array.isArray(pts[i]) ? pts[i] : [0, 0];
+    const [x2, y2] = Array.isArray(pts[(i + 1) % n]) ? pts[(i + 1) % n] : [0, 0];
+    area += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(area) / 2;
+}
+
 function fractureSlab(slabEl, slab) {
   const scene = slabEl.parentElement;
-  const numPieces = Math.random() > 0.5 ? 3 : 2;
-  const polys = generateCrackPolygons(slab.w, slab.h, numPieces);
+  const minArea = slab.w * slab.h * 0.05; // skip fragments smaller than 5% of slab
+  const polys = generateCrackPolygons(slab.w, slab.h).filter(p => polyArea(p) > minArea);
 
   // Slab position within scene (flex-centered)
   const slabLeft = slabEl.offsetLeft;
@@ -1071,32 +1090,45 @@ function fractureSlab(slabEl, slab) {
 function animateFragments(fragments, slab) {
   const n = fragments.length;
 
-  for (let i = 0; i < n; i++) {
-    // Each piece drifts away from center horizontally
+  // Shuffle order so pieces don't always fall left-to-right
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+
+  for (let rank = 0; rank < n; rank++) {
+    const i = order[rank];
+    const frag = fragments[i];
+
+    // Each piece drifts away from center
     const centerBias = (i / (n - 1 || 1)) - 0.5; // -0.5 to +0.5
-    const dx = centerBias * (80 + Math.random() * 60); // ±40-70px
+    const dx = centerBias * (80 + Math.random() * 60);
     const fallY = 350 + Math.random() * 200;
     const rot = (Math.random() - 0.5) * 30; // ±15°
-    const delay = i * (30 + Math.random() * 50);  // staggered 30-80ms
 
-    // Piece centroid for transform-origin (rough: polygon center)
-    const frag = fragments[i];
+    // Staggered: 120-200ms between each piece releasing
+    const delay = rank * (120 + Math.random() * 80);
+
     frag.style.transformOrigin = `${slab.w * (0.3 + centerBias * 0.4)}px ${slab.h * 0.4}px`;
 
     const baseTransform = frag.style.transform || '';
+    const dur = FRACTURE_MS;
 
     const anim = frag.animate([
       { transform: `${baseTransform} translate(0px, 0px) rotate(0deg)`, opacity: 1 },
-      { transform: `${baseTransform} translate(${dx * 0.05}px, ${fallY * 0.02}px) rotate(${rot * 0.05}deg)`, opacity: 1, offset: 0.08 },
-      { transform: `${baseTransform} translate(${dx * 0.2}px, ${fallY * 0.1}px) rotate(${rot * 0.15}deg)`, opacity: 1, offset: 0.2 },
-      { transform: `${baseTransform} translate(${dx * 0.45}px, ${fallY * 0.3}px) rotate(${rot * 0.35}deg)`, opacity: 0.9, offset: 0.4 },
-      { transform: `${baseTransform} translate(${dx * 0.7}px, ${fallY * 0.55}px) rotate(${rot * 0.6}deg)`, opacity: 0.7, offset: 0.6 },
-      { transform: `${baseTransform} translate(${dx * 0.9}px, ${fallY * 0.8}px) rotate(${rot * 0.85}deg)`, opacity: 0.4, offset: 0.8 },
+      // Brief hold — piece separates but hasn't fallen yet
+      { transform: `${baseTransform} translate(${dx * 0.02}px, ${fallY * 0.01}px) rotate(${rot * 0.02}deg)`, opacity: 1, offset: 0.1 },
+      // Gravity accelerates
+      { transform: `${baseTransform} translate(${dx * 0.15}px, ${fallY * 0.08}px) rotate(${rot * 0.1}deg)`, opacity: 1, offset: 0.25 },
+      { transform: `${baseTransform} translate(${dx * 0.4}px, ${fallY * 0.3}px) rotate(${rot * 0.3}deg)`, opacity: 0.9, offset: 0.45 },
+      { transform: `${baseTransform} translate(${dx * 0.7}px, ${fallY * 0.6}px) rotate(${rot * 0.6}deg)`, opacity: 0.6, offset: 0.65 },
+      { transform: `${baseTransform} translate(${dx * 0.9}px, ${fallY * 0.85}px) rotate(${rot * 0.85}deg)`, opacity: 0.3, offset: 0.85 },
       { transform: `${baseTransform} translate(${dx}px, ${fallY}px) rotate(${rot}deg)`, opacity: 0 },
     ], {
-      duration: FRACTURE_MS - delay,
+      duration: dur,
       delay,
-      easing: 'ease-in',
+      easing: 'cubic-bezier(0.45, 0, 0.85, 0.35)', // slow start, accelerating fall
       fill: 'forwards',
     });
 
@@ -1104,46 +1136,144 @@ function animateFragments(fragments, slab) {
   }
 }
 
-function generateCrackPolygons(w, h, numPieces) {
+function generateCrackPolygons(w, h) {
   const pad = 60; // extend beyond slab so only the slab's own clip-path is the edge
 
-  function makeCrackLine(xCenter) {
-    const pts = [];
-    const steps = 3 + Math.floor(Math.random() * 3); // 3-5 zigzag segments
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const jitter = (Math.random() - 0.5) * w * 0.14;
-      pts.push([xCenter + jitter, t * h]);
+  // Use actual crack spines if available, else generate random fallback lines
+  let lines;
+  if (crackSpines.length > 0) {
+    lines = crackSpines.slice();
+  } else {
+    // Fallback: generate 1-2 random crack lines
+    const makeLine = (xC) => {
+      const pts = [];
+      const steps = 3 + Math.floor(Math.random() * 3);
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        pts.push([xC + (Math.random() - 0.5) * w * 0.14, t * h]);
+      }
+      return pts;
+    };
+    lines = [makeLine(w * (0.35 + Math.random() * 0.3))];
+    if (Math.random() > 0.4) lines.push(makeLine(w * (0.6 + Math.random() * 0.2)));
+  }
+
+  // Sort spines by perpendicular offset from dominant crack direction
+  // so we can create strips left→right (or along the perpendicular axis)
+  const perpX = -Math.sin(crackDirection);
+  const perpY = Math.cos(crackDirection);
+  function spineOffset(spine) {
+    // Average perpendicular projection of spine midpoint
+    const mid = spine[Math.floor(spine.length / 2)];
+    return mid[0] * perpX + mid[1] * perpY;
+  }
+  lines.sort((a, b) => spineOffset(a) - spineOffset(b));
+
+  // Walk rectangle boundary clockwise, collecting corners between two edge points.
+  // Each crack spine starts and ends on slab edges — we partition the boundary at those points.
+  const corners = [[-pad, -pad], [w + pad, -pad], [w + pad, h + pad], [-pad, h + pad]];
+
+  // Determine which edge a point is on (0=top, 1=right, 2=bottom, 3=left)
+  // and its parametric position along the full clockwise perimeter.
+  function perimeterT(pt) {
+    const [x, y] = pt;
+    const eps = 5;
+    if (y <= eps)     return (x + pad) / (w + 2 * pad);                             // top edge: 0→1
+    if (x >= w - eps) return 1 + (y + pad) / (h + 2 * pad);                         // right edge: 1→2
+    if (y >= h - eps) return 2 + (w + pad - x) / (w + 2 * pad);                     // bottom edge: 2→3
+    return 3 + (h + pad - y) / (h + 2 * pad);                                       // left edge: 3→4
+  }
+
+  // For each crack, get the perimeter position of its start and end
+  // Start = first point, end = last point
+  const crackEndpoints = lines.map(spine => {
+    const tStart = perimeterT(spine[0]);
+    const tEnd = perimeterT(spine[spine.length - 1]);
+    return { spine, tStart, tEnd };
+  });
+
+  // Collect all split points on the perimeter (crack endpoints)
+  // Each split point has a perimeter position and references its crack
+  const splits = [];
+  for (const ce of crackEndpoints) {
+    splits.push({ t: ce.tStart, crack: ce, isStart: true });
+    splits.push({ t: ce.tEnd,   crack: ce, isStart: false });
+  }
+  splits.sort((a, b) => a.t - b.t);
+
+  // Walk the perimeter, collecting boundary corners + crack traversals into polygons.
+  // Between consecutive same-side splits, the boundary arc + crack form a closed polygon.
+  // Simpler approach: use perpendicular side test. For each region between consecutive
+  // cracks (sorted by offset), build a polygon from the two cracks + boundary corners between them.
+
+  // For two consecutive crack lines, build a polygon:
+  // Walk crack A from start→end, then boundary corners from A.end to B.end,
+  // then crack B reversed (end→start), then boundary corners from B.start to A.start.
+  function cornersBetween(t1, t2) {
+    // Collect rectangle corners whose perimeter position is between t1 and t2 (clockwise)
+    const result = [];
+    for (const c of corners) {
+      let tc = perimeterT(c);
+      if (t1 < t2) {
+        if (tc > t1 && tc < t2) result.push(c);
+      } else {
+        // Wraps around (t2 < t1)
+        if (tc > t1 || tc < t2) result.push(c);
+      }
     }
-    return pts;
+    // Sort by perimeter distance from t1
+    result.sort((a, b) => {
+      let da = perimeterT(a) - t1; if (da < 0) da += 4;
+      let db = perimeterT(b) - t1; if (db < 0) db += 4;
+      return da - db;
+    });
+    return result;
   }
 
-  if (numPieces === 2) {
-    const xC = w * (0.35 + Math.random() * 0.3);
-    const crack = makeCrackLine(xC);
+  const polys = [];
+  const n = lines.length;
 
-    return [
-      // Left piece: top-left → along crack → bottom-left
-      [[-pad, -pad], ...crack, [-pad, h + pad]],
-      // Right piece: top-right → along crack → bottom-right
-      [[w + pad, -pad], ...crack, [w + pad, h + pad]],
-    ];
+  // First region: boundary from last crack's end → first crack's start + first crack reversed
+  {
+    const first = crackEndpoints[0];
+    const last = crackEndpoints[n - 1];
+    const tFrom = last.spine[last.spine.length - 1];
+    const tTo = first.spine[0];
+    const tFromT = perimeterT(tFrom);
+    const tToT = perimeterT(tTo);
+    const betweenCorners = cornersBetween(tFromT, tToT);
+    polys.push([tFrom, ...betweenCorners, tTo, ...first.spine.slice().reverse(),
+      ...last.spine]);
   }
 
-  // 3 pieces: two crack lines
-  const x1 = w * (0.2 + Math.random() * 0.15);
-  const x2 = w * (0.55 + Math.random() * 0.2);
-  const crack1 = makeCrackLine(x1);
-  const crack2 = makeCrackLine(x2);
+  // Middle regions: between consecutive cracks
+  for (let i = 0; i < n - 1; i++) {
+    const a = crackEndpoints[i];
+    const b = crackEndpoints[i + 1];
+    // From A.end → boundary corners → B.end, then B reversed, boundary corners, back to A.start
+    const tAend = perimeterT(a.spine[a.spine.length - 1]);
+    const tBstart = perimeterT(b.spine[0]);
+    const tBend = perimeterT(b.spine[b.spine.length - 1]);
+    const tAstart = perimeterT(a.spine[0]);
 
-  return [
-    // Left piece
-    [[-pad, -pad], ...crack1, [-pad, h + pad]],
-    // Middle piece: crack1 top→bottom, then crack2 bottom→top
-    [...crack1, ...crack2.slice().reverse()],
-    // Right piece
-    [[w + pad, -pad], ...crack2, [w + pad, h + pad]],
-  ];
+    const corners1 = cornersBetween(tAend, tBend);
+    const corners2 = cornersBetween(tBstart, tAstart);
+    polys.push([...a.spine, ...corners1, ...b.spine.slice().reverse(), ...corners2]);
+  }
+
+  // Last region: from last crack end → boundary → first crack start + first crack + boundary back
+  // Already handled by "first region" above (it wraps around)
+
+  // If only 1 crack, we need a second polygon for the other side
+  if (n === 1) {
+    const spine = crackEndpoints[0].spine;
+    const tStart = perimeterT(spine[0]);
+    const tEnd = perimeterT(spine[spine.length - 1]);
+    const betweenCorners = cornersBetween(tEnd, tStart);
+    polys.push([...spine, ...betweenCorners]);
+  }
+
+  return polys;
 }
 
 // ── Eternalize → PNG export ───────────────────────────────────────────────────
