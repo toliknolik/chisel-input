@@ -30,17 +30,34 @@
       <div class="vein-wrap" id="vein-b"><img src="assets/marble/vein-b.svg" alt=""></div>
       <!-- Directional light hint — very subtle upper-left to lower-right gradient -->
       <div class="marble-directional"></div>
+      <!-- Age darkening — 'color' blend preserves luminosity (volume/depth) -->
+      <div class="marble-age"></div>
       <!-- Text layer — position/width set by JS via computeSafeTextArea -->
       <div id="text-layer">
         <div id="carved-text"><span id="cursor"></span></div>
       </div>
     </div>
     <div id="slab-stroke"></div>
+    <!-- Edge moss overlay — outside slab clip-path so it can extend beyond edges -->
+    <div class="marble-moss"></div>
     <div id="controls">
       <button id="btn-destroy">[start again]</button>
       <button id="btn-eternalize">[share]</button>
     </div>
   </div>
+
+  <!-- Moss texture filter — turbulence patchiness with sharp edges -->
+  <svg width="0" height="0" style="position:absolute">
+    <filter id="moss-noise" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="4" seed="42" result="noise"/>
+      <feColorMatrix id="moss-threshold" type="matrix" in="noise"
+        values="0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 50 -30" result="threshold"/>
+      <feComposite in="SourceGraphic" in2="threshold" operator="in"/>
+    </filter>
+  </svg>
 
   <canvas id="cloud"></canvas>
   <nav id="sidebar"></nav>

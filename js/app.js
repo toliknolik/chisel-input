@@ -3,6 +3,7 @@ import { initParticles, resizeParticles, emitChiselDust, emitCrumble, clearParti
 import { initCloud, triggerCrumbleCloud, triggerRevealCloud } from './cloud.js';
 import { initSidebar } from './sidebar.js';
 import { lightParams, setUpdateLighting } from './light.js';
+import { ageParams } from './aging.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,9 @@ let crackCount      = 0;
 let crackDirection  = 0;   // dominant angle in radians, set per slab
 let existingCracks  = [];  // array of polylines (each is [[x,y], ...])
 const MAX_CRACKS    = 4;
+let ageLevel        = 0;   // 0 (fresh) to 1 (fully aged)
+let lastTypeTime    = 0;   // timestamp of last keystroke
+// ageParams imported from aging.js (shared with sidebar)
 
 // lightParams imported from light.js (shared with sidebar)
 
@@ -59,6 +63,108 @@ function init() {
   document.getElementById('btn-destroy').addEventListener('click', destroySlab);
   document.getElementById('btn-eternalize').addEventListener('click', eternalize);
   initSidebar();
+  startAgingLoop();
+}
+
+// ── Aging system ─────────────────────────────────────────────────────────────
+
+function startAgingLoop() {
+  let lastFrame = performance.now();
+  function tick(now) {
+    const dt = (now - lastFrame) / 1000;
+    lastFrame = now;
+    if (Date.now() - lastTypeTime > ageParams.idleDelay * 1000 && ageLevel < 1 && !destroying) {
+      ageLevel = Math.min(1, ageLevel + dt * ageParams.speed / ageParams.duration);
+      updateAgeVisuals();
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function updateAgeVisuals() {
+  const ageEl = document.querySelector('.marble-age');
+  const mossEl = document.querySelector('.marble-moss');
+  if (!ageEl || !mossEl || !currentSlab) return;
+
+  // Darkening: light grey multiply — preserves volume contrast
+  ageEl.style.opacity = (ageLevel * 0.5).toFixed(3);
+
+  // Moss: starts at age 0.15
+  const mossFrac = Math.max(0, (ageLevel - 0.15) / 0.85);
+
+  // Opacity: snap to full — threshold + edge mask control visibility
+  mossEl.style.opacity = mossFrac > 0 ? '0.85' : '0';
+
+  // Combined edge + patch mask:
+  // - Edge band: scale 1.0 → 0.92 (~8% band, but patches thin toward center)
+  // - Threshold: strict (few spots) → relaxed (many patches)
+  if (mossFrac > 0) {
+    const pad = 3; // px moss extends beyond slab edges
+    const w = currentSlab.w, h = currentSlab.h;
+    const mw = w + pad * 2, mh = h + pad * 2;
+    const cx = mw / 2, cy = mh / 2;
+    const scale = 1.0 - mossFrac * 0.10;
+    const gain = 50 - mossFrac * 35;   // 50 → 15
+    const bias = -30 + mossFrac * 24;  // -30 → -6
+    applyMossMask(mossEl, mw, mh, cx, cy, scale, 42, 75, gain, bias, pad);
+  }
+}
+
+function applyMossMask(el, w, h, cx, cy, scale, seed, displacement, gain, bias, pad) {
+  // Combined mask: edge band (inverted slab cutout) × turbulence patchiness.
+  // 1. Edge band: white rect + black scaled-down slab = white only at edges
+  // 2. Turbulence patches: fractalNoise thresholded to create organic spots
+  // 3. Composite: "in" operator = patches only visible within edge band
+  // pad: slab path is offset by this amount so moss extends beyond slab edges
+  const p = pad || 0;
+  const mossMask = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<defs>` +
+    // Edge band filter: displacement + hard threshold to re-sharpen interpolation blur
+    `<filter id="edge${seed}" x="-20%" y="-20%" width="140%" height="140%">` +
+    `<feTurbulence type="turbulence" baseFrequency="0.005" numOctaves="3" seed="${seed}" result="warp"/>` +
+    `<feDisplacementMap in="SourceGraphic" in2="warp" scale="${displacement}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>` +
+    `<feColorMatrix type="matrix" in="displaced" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 500 -250"/>` +
+    `</filter>` +
+    // Edge band shape as a mask — outer boundary = slab path scaled up (moss extends beyond slab)
+    // Inner cutout = scaled-down slab (center stays clean)
+    // Outer scale: expand slab path so it's ~pad px larger on each side
+    `<mask id="edgemask${seed}">` +
+    `<g transform="translate(${cx},${cy}) scale(${(1 + 2 * p / Math.min(w - 2*p, h - 2*p)).toFixed(3)}) translate(${-cx},${-cy})">` +
+    `<g transform="translate(${p},${p})"><path d="${currentSlab.path}" fill="white"/></g>` +
+    `</g>` +
+    `<g filter="url(#edge${seed})" transform="translate(${cx},${cy}) scale(${scale.toFixed(3)}) translate(${-cx},${-cy})">` +
+    `<g transform="translate(${p},${p})"><path d="${currentSlab.path}" fill="black"/></g>` +
+    `</g>` +
+    `</mask>` +
+    // Patch filter: turbulence → threshold → erode (removes thin wisps)
+    `<filter id="patch${seed}" x="0" y="0" width="100%" height="100%">` +
+    `<feTurbulence type="fractalNoise" baseFrequency="0.008" numOctaves="3" seed="${seed + 7}" result="noise"/>` +
+    `<feColorMatrix type="matrix" in="noise" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${gain.toFixed(1)} ${bias.toFixed(1)}" result="thresh"/>` +
+    `<feMorphology operator="erode" radius="12" in="thresh" result="clean"/>` +
+    `<feMorphology operator="dilate" radius="12" in="clean" result="expanded"/>` +
+    `<feColorMatrix type="matrix" in="expanded" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 500 -250"/>` +
+    `</filter>` +
+    `</defs>` +
+    // White patches confined to edge band
+    `<rect width="${w}" height="${h}" fill="white" filter="url(#patch${seed})" mask="url(#edgemask${seed})"/>` +
+    `</svg>`;
+  const maskUrl = `url("data:image/svg+xml,${encodeURIComponent(mossMask)}")`;
+  el.style.webkitMaskImage = maskUrl;
+  el.style.maskImage = maskUrl;
+  el.style.webkitMaskSize = `${w}px ${h}px`;
+  el.style.maskSize = `${w}px ${h}px`;
+}
+
+function resetAge() {
+  ageLevel = 0;
+  const ageEl = document.querySelector('.marble-age');
+  if (ageEl) ageEl.style.opacity = '0';
+  for (const el of document.querySelectorAll('.marble-moss')) {
+    el.style.opacity = '0';
+    el.style.webkitMaskImage = '';
+    el.style.maskImage = '';
+  }
 }
 
 // ── Slab setup ────────────────────────────────────────────────────────────────
@@ -170,6 +276,17 @@ function applySlabShape(slab) {
   stroke.style.width     = slab.w + 'px';
   stroke.style.height    = slab.h + 'px';
   stroke.style.transform = transform;
+
+  // Moss overlay — outside slab clip-path, expanded by 10px per side
+  const mossPad = 3;
+  const mossOuter = document.querySelector('.marble-moss');
+  if (mossOuter) {
+    mossOuter.style.width  = (slab.w + mossPad * 2) + 'px';
+    mossOuter.style.height = (slab.h + mossPad * 2) + 'px';
+    mossOuter.style.left   = -mossPad + 'px';
+    mossOuter.style.top    = -mossPad + 'px';
+    mossOuter.style.transform = transform;
+  }
   stroke.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${slab.w}" height="${slab.h}" viewBox="0 0 ${slab.w} ${slab.h}"><path d="${slab.path}" fill="none" stroke="#F8F8F6" stroke-width="1"/></svg>`;
 
   // Rotate the volume layer around the slab path's bounding-box center (not the
@@ -384,7 +501,8 @@ function onKeyDown(e) {
     return;
   }
   if (e.key.length > 1 && e.key !== ' ') return;
-  e.preventDefault(); // stop space from activating focused buttons
+  e.preventDefault();
+  lastTypeTime = Date.now();
   if (charCount + keyQueue.length >= MAX_CHARS) return;
 
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -400,7 +518,7 @@ function processQueue() {
   const ch    = keyQueue.shift();
   const delay = DELAY_MIN + Math.random() * (DELAY_MAX - DELAY_MIN);
 
-  playChisel();
+  if (ch === '\u00A0') playSkip(); else playChisel();
 
   setTimeout(() => {
     carveCharacter(ch);
@@ -511,40 +629,35 @@ function carveCharacter(ch) {
 
 // ── Audio — chisel tap ────────────────────────────────────────────────────────
 
+const pickBuffers = [];
+let lastPickIdx = -1;
+
+// Preload pick samples
+['assets/pick_1.mp3', 'assets/pick_2.mp3', 'assets/pick_3.mp3'].forEach((url, i) => {
+  preloadAudio(url).then(b => { pickBuffers[i] = b; }).catch(() => {});
+});
+
 function playChisel() {
-  if (!audioCtx) return;
+  if (!audioCtx || pickBuffers.length === 0) return;
 
-  const now = audioCtx.currentTime;
-  const bufLen = Math.floor(audioCtx.sampleRate * 0.08);
-  const buf    = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
-  const data   = buf.getChannelData(0);
+  // Pick a random sample, avoiding repeat of the last one
+  let idx;
+  do { idx = Math.floor(Math.random() * 3); } while (idx === lastPickIdx && pickBuffers.length > 1);
+  lastPickIdx = idx;
 
-  for (let i = 0; i < bufLen; i++) {
-    const env = Math.pow(1 - i / bufLen, 3);
-    data[i]   = (Math.random() * 2 - 1) * env;
-  }
+  const buf = pickBuffers[idx];
+  if (!buf) return;
 
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
-
-  const bp = audioCtx.createBiquadFilter();
-  bp.type            = 'bandpass';
-  bp.frequency.value = 2800 + Math.random() * 800;
-  bp.Q.value         = 0.8;
-
-  const hp = audioCtx.createBiquadFilter();
-  hp.type            = 'highpass';
-  hp.frequency.value = 800;
+  src.playbackRate.value = 0.85 + Math.random() * 0.3; // pitch variation
 
   const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.25, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+  gain.gain.value = 0.3 + Math.random() * 0.2; // volume variation
 
-  src.connect(bp);
-  bp.connect(hp);
-  hp.connect(gain);
+  src.connect(gain);
   gain.connect(audioCtx.destination);
-  src.start(now);
+  src.start();
 }
 
 // ── Backspace cracks ─────────────────────────────────────────────────────────
@@ -779,40 +892,60 @@ function pointsToSvgPath(pts) {
   return d;
 }
 
+let crackBuffer = null;
+let newSlabBuffer = null;
+
+// Preload audio samples
+function preloadAudio(url) {
+  return fetch(url)
+    .then(r => r.arrayBuffer())
+    .then(buf => {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      return audioCtx.decodeAudioData(buf);
+    });
+}
+let skipBuffer = null;
+preloadAudio('assets/crack.mp3').then(b => { crackBuffer = b; }).catch(() => {});
+preloadAudio('assets/new_slab.mp3').then(b => { newSlabBuffer = b; }).catch(() => {});
+preloadAudio('assets/skip.mp3').then(b => { skipBuffer = b; }).catch(() => {});
+
 function playCrack() {
-  if (!audioCtx) return;
-
-  const now = audioCtx.currentTime;
-  const bufLen = Math.floor(audioCtx.sampleRate * 0.04); // 40ms — sharp snap
-  const buf    = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
-  const data   = buf.getChannelData(0);
-
-  for (let i = 0; i < bufLen; i++) {
-    const env = Math.pow(1 - i / bufLen, 5); // Very fast decay
-    data[i]   = (Math.random() * 2 - 1) * env;
-  }
+  if (!audioCtx || !crackBuffer) return;
 
   const src = audioCtx.createBufferSource();
-  src.buffer = buf;
-
-  const bp = audioCtx.createBiquadFilter();
-  bp.type            = 'bandpass';
-  bp.frequency.value = 4500 + Math.random() * 1500; // Higher pitch than chisel
-  bp.Q.value         = 1.2;
-
-  const hp = audioCtx.createBiquadFilter();
-  hp.type            = 'highpass';
-  hp.frequency.value = 1200;
+  src.buffer = crackBuffer;
+  // Slight pitch variation each crack
+  src.playbackRate.value = 0.9 + Math.random() * 0.2;
 
   const gain = audioCtx.createGain();
-  gain.gain.setValueAtTime(0.35, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+  gain.gain.value = 0.5;
 
-  src.connect(bp);
-  bp.connect(hp);
-  hp.connect(gain);
+  src.connect(gain);
   gain.connect(audioCtx.destination);
-  src.start(now);
+  src.start();
+}
+
+function playNewSlab() {
+  if (!audioCtx || !newSlabBuffer) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = newSlabBuffer;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.5;
+  src.connect(gain);
+  gain.connect(audioCtx.destination);
+  src.start();
+}
+
+function playSkip() {
+  if (!audioCtx || !skipBuffer) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = skipBuffer;
+  src.playbackRate.value = 0.9 + Math.random() * 0.2;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.4;
+  src.connect(gain);
+  gain.connect(audioCtx.destination);
+  src.start();
 }
 
 // ── Destroy slab ──────────────────────────────────────────────────────────────
@@ -829,10 +962,12 @@ function destroySlab() {
   emitCrumble(currentSlab);
   setTimeout(triggerCrumbleCloud, 200);
 
-  // Hide original slab + stroke + controls immediately
+  // Hide original slab + stroke + moss + controls immediately
   const strokeEl = document.getElementById('slab-stroke');
+  const mossOuter = document.querySelector('.marble-moss');
   slabEl.style.opacity = '0';
   strokeEl.style.opacity = '0';
+  if (mossOuter) mossOuter.style.opacity = '0';
   controls.style.opacity = '0';
   controls.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 400, easing: 'ease' });
 
@@ -850,6 +985,7 @@ function destroySlab() {
     applyFontSize(BASE_FONT);
     existingCracks = [];
     crackDirection = (20 + Math.random() * 50) * Math.PI / 180;
+    resetAge();
     keyQueue   = [];
     isCarving  = false;
 
@@ -860,6 +996,7 @@ function destroySlab() {
     applyVeins(currentSlab);
 
     triggerRevealCloud();
+    playNewSlab();
     const fadeIn = slabEl.animate(
       [{ opacity: 0 }, { opacity: 1 }],
       { duration: 1200, easing: 'ease-out', fill: 'forwards' },

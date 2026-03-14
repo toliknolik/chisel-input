@@ -5,6 +5,7 @@
 import { cloudParams, testCloud } from './cloud.js';
 import { particleParams, testParticles } from './particles.js';
 import { lightParams, updateLighting } from './light.js';
+import { ageParams } from './aging.js';
 
 const GROUPS = [
   {
@@ -79,6 +80,16 @@ const GROUPS = [
       { id: 'opacity',         label: 'Opacity',    min: 0, max: 1, step: 0.05 },
       { id: 'blendMode',       label: 'Blend Mode', type: 'select',
         options: ['soft-light', 'overlay', 'multiply', 'screen', 'hard-light', 'color-dodge', 'normal'] },
+    ],
+  },
+  {
+    group: 'Aging',
+    params: ageParams,
+    controls: [
+      { section: 'Time' },
+      { id: 'speed',     label: 'Speed',      min: 0.1, max: 10, step: 0.1 },
+      { id: 'duration',  label: 'Duration',   min: 10, max: 120, step: 5, unit: 's' },
+      { id: 'idleDelay', label: 'Idle Delay',  min: 0, max: 5, step: 0.5, unit: 's' },
     ],
   },
 ];

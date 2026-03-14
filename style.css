@@ -214,6 +214,30 @@ body {
   height: 100%;
 }
 
+/* ── Aging layers ────────────────────────────────── */
+
+.marble-age {
+  position: absolute;
+  inset: 0;
+  background: rgb(140, 135, 128);
+  mix-blend-mode: multiply;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.marble-moss {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: url('assets/moss.jpg') repeat;
+  background-size: 384px 256px;
+  mix-blend-mode: multiply;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  /* width, height, transform set by JS to match #slab but expanded by 10px */
+}
+
 /* ── Text layer ──────────────────────────────────── */
 
 #text-layer {
