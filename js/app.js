@@ -493,6 +493,13 @@ function applyVeins(slab) {
   wrapB.style.opacity   = opB;
 }
 
+// ── Audio helper ──────────────────────────────────────────────────────────────
+
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
 // ── Typing ────────────────────────────────────────────────────────────────────
 
 function onKeyDown(e) {
@@ -507,7 +514,7 @@ function onKeyDown(e) {
   lastTypeTime = Date.now();
   if (charCount + keyQueue.length >= MAX_CHARS) return;
 
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  ensureAudio();
 
   keyQueue.push(e.key === ' ' ? '\u00A0' : e.key.toUpperCase());
   processQueue();
@@ -518,6 +525,11 @@ function onKeyDown(e) {
 function initMobileInput() {
   const mobileInput = document.getElementById('mobile-input');
   if (!mobileInput) return;
+
+  // Seed with padding so backspace always has content to delete
+  const SEED = '......';
+  mobileInput.value = SEED;
+  let lastLen = SEED.length;
 
   // Focus hidden input on any touch/click on the scene (opens virtual keyboard)
   const scene = document.getElementById('scene');
@@ -536,48 +548,50 @@ function initMobileInput() {
 
   // Handle text input from virtual keyboard
   mobileInput.addEventListener('beforeinput', (e) => {
+    ensureAudio();
     if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
       e.preventDefault();
       if (!destroying) addCrack();
+      // Re-seed so next backspace works
+      mobileInput.value = SEED;
+      lastLen = SEED.length;
       return;
     }
     if (e.inputType === 'insertText' && e.data) {
       e.preventDefault();
       lastTypeTime = Date.now();
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
       for (const ch of e.data) {
         if (charCount + keyQueue.length >= MAX_CHARS) break;
         keyQueue.push(ch === ' ' ? '\u00A0' : ch.toUpperCase());
       }
       processQueue();
+      // Re-seed
+      mobileInput.value = SEED;
+      lastLen = SEED.length;
     }
   });
 
   // Fallback: input event for browsers that don't support beforeinput well
-  let lastValue = '';
   mobileInput.addEventListener('input', () => {
-    const val = mobileInput.value;
-    if (val.length > lastValue.length) {
+    ensureAudio();
+    const curLen = mobileInput.value.length;
+    if (curLen > lastLen) {
       // Characters added
-      const added = val.slice(lastValue.length);
+      const added = mobileInput.value.slice(lastLen);
       lastTypeTime = Date.now();
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       for (const ch of added) {
         if (charCount + keyQueue.length >= MAX_CHARS) break;
         keyQueue.push(ch === ' ' ? '\u00A0' : ch.toUpperCase());
       }
       processQueue();
-    } else if (val.length < lastValue.length) {
+    } else if (curLen < lastLen) {
       // Characters deleted (backspace)
       if (!destroying) addCrack();
     }
-    lastValue = val;
-    // Keep input from filling up — reset periodically
-    if (mobileInput.value.length > 50) {
-      mobileInput.value = mobileInput.value.slice(-10);
-      lastValue = mobileInput.value;
-    }
+    // Re-seed to ensure backspace always works
+    mobileInput.value = SEED;
+    lastLen = SEED.length;
   });
 
   // Keep focus on mobile input (refocus if lost, unless sidebar is open)
@@ -746,7 +760,7 @@ function playChisel() {
 // ── Backspace cracks ─────────────────────────────────────────────────────────
 
 function addCrack() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  ensureAudio();
   crackCount++;
   playCrack();
 
