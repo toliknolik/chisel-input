@@ -65,6 +65,7 @@ function init() {
   document.getElementById('btn-eternalize').addEventListener('click', eternalize);
   initSidebar();
   startAgingLoop();
+  initMobileInput();
 }
 
 // ── Aging system ─────────────────────────────────────────────────────────────
@@ -510,6 +511,87 @@ function onKeyDown(e) {
 
   keyQueue.push(e.key === ' ' ? '\u00A0' : e.key.toUpperCase());
   processQueue();
+}
+
+// ── Mobile input ──────────────────────────────────────────────────────────────
+
+function initMobileInput() {
+  const mobileInput = document.getElementById('mobile-input');
+  if (!mobileInput) return;
+
+  // Focus hidden input on any touch/click on the scene (opens virtual keyboard)
+  const scene = document.getElementById('scene');
+  scene.addEventListener('touchstart', focusMobileInput, { passive: true });
+  scene.addEventListener('click', focusMobileInput);
+
+  // Resume AudioContext on first user interaction (mobile requirement)
+  function resumeAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    document.removeEventListener('touchstart', resumeAudio);
+    document.removeEventListener('click', resumeAudio);
+  }
+  document.addEventListener('touchstart', resumeAudio, { passive: true });
+  document.addEventListener('click', resumeAudio);
+
+  // Handle text input from virtual keyboard
+  mobileInput.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
+      e.preventDefault();
+      if (!destroying) addCrack();
+      return;
+    }
+    if (e.inputType === 'insertText' && e.data) {
+      e.preventDefault();
+      lastTypeTime = Date.now();
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      for (const ch of e.data) {
+        if (charCount + keyQueue.length >= MAX_CHARS) break;
+        keyQueue.push(ch === ' ' ? '\u00A0' : ch.toUpperCase());
+      }
+      processQueue();
+    }
+  });
+
+  // Fallback: input event for browsers that don't support beforeinput well
+  let lastValue = '';
+  mobileInput.addEventListener('input', () => {
+    const val = mobileInput.value;
+    if (val.length > lastValue.length) {
+      // Characters added
+      const added = val.slice(lastValue.length);
+      lastTypeTime = Date.now();
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      for (const ch of added) {
+        if (charCount + keyQueue.length >= MAX_CHARS) break;
+        keyQueue.push(ch === ' ' ? '\u00A0' : ch.toUpperCase());
+      }
+      processQueue();
+    } else if (val.length < lastValue.length) {
+      // Characters deleted (backspace)
+      if (!destroying) addCrack();
+    }
+    lastValue = val;
+    // Keep input from filling up — reset periodically
+    if (mobileInput.value.length > 50) {
+      mobileInput.value = mobileInput.value.slice(-10);
+      lastValue = mobileInput.value;
+    }
+  });
+
+  // Keep focus on mobile input (refocus if lost, unless sidebar is open)
+  mobileInput.addEventListener('blur', () => {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar?.classList.contains('open')) {
+      setTimeout(() => mobileInput.focus(), 100);
+    }
+  });
+}
+
+function focusMobileInput() {
+  const mobileInput = document.getElementById('mobile-input');
+  if (mobileInput) mobileInput.focus();
 }
 
 function processQueue() {
