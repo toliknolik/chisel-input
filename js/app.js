@@ -4,6 +4,30 @@ import { initCloud, triggerCrumbleCloud, triggerRevealCloud } from './cloud.js';
 import { initSidebar, setIntroResetCallback } from './sidebar.js';
 import { lightParams, setUpdateLighting } from './light.js';
 import { ageParams } from './aging.js';
+import { recordKeystroke as _recordKeystroke, getDeliberation, resetDeliberation } from './deliberation.js';
+
+const METER_BARS = 9; // total pipe characters in the meter
+let meterHideTimer = 0;
+const METER_VISIBLE_MS = 2000; // hide after 2s of inactivity
+
+function recordKeystroke(type) {
+  _recordKeystroke(type);
+  updateAnxietyMeter();
+}
+function updateAnxietyMeter() {
+  const meter = document.getElementById('anxiety-meter');
+  if (!meter || destroying) return;
+  const { score } = getDeliberation();
+  const anxiety = 1 - score;
+  const filled = Math.round(anxiety * METER_BARS);
+  const empty = METER_BARS - filled;
+  meter.querySelector('.anxiety-filled').textContent = '|'.repeat(filled);
+  meter.querySelector('.anxiety-empty').textContent = '|'.repeat(empty);
+  // Show meter, then auto-hide after inactivity
+  meter.classList.add('visible');
+  clearTimeout(meterHideTimer);
+  meterHideTimer = setTimeout(() => meter.classList.remove('visible'), METER_VISIBLE_MS);
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -56,7 +80,7 @@ async function playIntro() {
   controls.style.pointerEvents = 'none';
 
   const CHAR_DELAY = 210; // ms between characters
-  const PAUSE      = 1800; // ms pause after a completed line
+  const PAUSE      = 1000; // ms pause after a completed line
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -97,13 +121,9 @@ async function playIntro() {
   }
 
   // Act 1
-  await sleep(800); // initial pause
-  await autoType('STONE DOES NOT FORGET');
+  await sleep(800);
+  await autoType('WHAT WOVLD YOV WRITE');
   await sleep(PAUSE);
-
-  // Crack to demonstrate backspace
-  addCrack();
-  await sleep(600);
 
   // Destroy slab 1
   destroySlab();
@@ -111,19 +131,14 @@ async function playIntro() {
   await sleep(600);
 
   // Act 2
-  await autoType('NEITHER DOES IT FORGIVE');
+  await autoType('IF YOV COVLD NOT ERASE IT?');
   await sleep(PAUSE);
 
-  // Destroy slab 2
-  destroySlab();
-  await waitReady();
-  await sleep(600);
+  // Crack — demonstrates the cost
+  addCrack();
+  await sleep(800);
 
-  // Act 3
-  await autoType('CHOOSE YOVR WORDS');
-  await sleep(PAUSE * 1.5);
-
-  // Destroy slab 3 — user gets a fresh one
+  // Destroy slab 2 — user gets a fresh one
   destroySlab();
   await waitReady();
   await sleep(400);
@@ -132,6 +147,13 @@ async function playIntro() {
   slabsDestroyed  = 0;
   sessionStart    = 0;
   totalKeystrokes = 0;
+  resetDeliberation();
+  const meter = document.getElementById('anxiety-meter');
+  if (meter) {
+    meter.classList.remove('visible');
+    meter.querySelector('.anxiety-filled').textContent = '';
+    meter.querySelector('.anxiety-empty').textContent = '|'.repeat(METER_BARS);
+  }
 
   // Show controls
   controls.style.opacity = '';
@@ -628,6 +650,7 @@ function onKeyDown(e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'Backspace' || e.key === 'Delete') {
     e.preventDefault();
+    recordKeystroke('backspace');
     if (!destroying) addCrack();
     return;
   }
@@ -639,6 +662,7 @@ function onKeyDown(e) {
   if (charCount + keyQueue.length >= MAX_CHARS) return;
 
   ensureAudio();
+  recordKeystroke('char');
   totalKeystrokes++;
   keyQueue.push(e.key === ' ' ? '\u00A0' : romanize(e.key));
   processQueue();
@@ -676,6 +700,7 @@ function initMobileInput() {
     ensureAudio();
     if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
       e.preventDefault();
+      recordKeystroke('backspace');
       if (!destroying) addCrack();
       // Re-seed so next backspace works
       mobileInput.value = SEED;
@@ -690,6 +715,7 @@ function initMobileInput() {
       for (const ch of e.data) {
         if (!LATIN_RE.test(ch)) continue;    // block non-Latin
         if (charCount + keyQueue.length >= MAX_CHARS) break;
+        recordKeystroke('char');
         totalKeystrokes++;
         keyQueue.push(ch === ' ' ? '\u00A0' : romanize(ch));
       }
@@ -712,12 +738,14 @@ function initMobileInput() {
       for (const ch of added) {
         if (!LATIN_RE.test(ch)) continue;    // block non-Latin
         if (charCount + keyQueue.length >= MAX_CHARS) break;
+        recordKeystroke('char');
         totalKeystrokes++;
         keyQueue.push(ch === ' ' ? '\u00A0' : romanize(ch));
       }
       processQueue();
     } else if (curLen < lastLen) {
       // Characters deleted (backspace)
+      recordKeystroke('backspace');
       if (!destroying) addCrack();
     }
     // Re-seed to ensure backspace always works
@@ -896,6 +924,10 @@ function addCrack() {
   playCrack();
 
   if (crackCount >= MAX_CRACKS) {
+    // Hide meter before fracture animation
+    clearTimeout(meterHideTimer);
+    const meter = document.getElementById('anxiety-meter');
+    if (meter) meter.classList.remove('visible');
     destroySlab();
     return;
   }
@@ -1200,6 +1232,11 @@ function destroySlab() {
   const controls = document.getElementById('controls');
   if (destroying) return;
   destroying = true;
+
+  // Hide anxiety meter during destruction
+  clearTimeout(meterHideTimer);
+  const meter = document.getElementById('anxiety-meter');
+  if (meter) meter.classList.remove('visible');
 
   playDestroy();
   emitCrumble(currentSlab);
@@ -1693,6 +1730,9 @@ async function eternalize() {
   link.href = canvas.toDataURL('image/png');
   link.click();
 }
+
+// Expose deliberation API for external UI
+window.getDeliberation = getDeliberation;
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 

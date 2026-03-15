@@ -57,6 +57,10 @@ body {
 
 /* ── Slab ────────────────────────────────────────── */
 
+#slab-wrap {
+  position: relative;
+}
+
 #slab {
   position: relative;
   isolation: isolate; /* keeps blend modes within the marble layer stack */
@@ -67,6 +71,7 @@ body {
 #slab-stroke {
   position: absolute;
   top: 0;
+  left: 0;
   pointer-events: none;
   /* width, height, transform set by JS to match #slab */
 }
@@ -339,6 +344,39 @@ body {
   align-items: center;
   justify-content: space-between;
   width: 341px;
+}
+
+#anxiety-meter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 341px;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--control-color);
+  opacity: 0;
+  transition: opacity 800ms cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+}
+
+#anxiety-meter.visible {
+  opacity: 1;
+  transition: opacity 300ms cubic-bezier(0.0, 0, 0.2, 1);
+}
+
+.anxiety-bar {
+  letter-spacing: 0.02em;
+}
+
+.anxiety-filled {
+  color: var(--control-color);
+}
+
+.anxiety-empty {
+  color: #e1e0cd;
 }
 
 #controls button {

@@ -12,34 +12,40 @@
 <body>
 
   <div id="scene">
-    <div id="slab">
-      <!-- Layer 1: Marble base gradient (#FCFAF8 → #F4F3F1) -->
-      <div class="marble-base"><img src="assets/marble/base.svg" alt=""></div>
-      <!-- Layer 2: Directional volume / lighting — rotated 60°, y-flipped, screen blend -->
-      <div class="marble-volume"><img src="assets/marble/volume.svg" alt=""></div>
-      <!-- Layer 2b: Surface lighting — feDiffuseLighting + feSpecularLighting on turbulence bump map -->
-      <div class="marble-light"></div>
-      <!-- Layer 2e: Chip edge stroke — same transform as volume, strokes the mask boundary -->
-      <div class="marble-chip-edge"></div>
-      <!-- Layer 3: Surface cracks — rotated −60°, normal blend -->
-      <div class="marble-cracks"><img src="assets/marble/cracks.svg" alt=""></div>
-      <!-- Crack overlay — backspace damage cracks rendered here -->
-      <div id="crack-overlay"></div>
-      <!-- Layer 4–5: Organic veins — position/rotation set by JS, multiply blend -->
-      <div class="vein-wrap" id="vein-a"><img src="assets/marble/vein-a.svg" alt=""></div>
-      <div class="vein-wrap" id="vein-b"><img src="assets/marble/vein-b.svg" alt=""></div>
-      <!-- Directional light hint — very subtle upper-left to lower-right gradient -->
-      <div class="marble-directional"></div>
-      <!-- Age darkening — 'color' blend preserves luminosity (volume/depth) -->
-      <div class="marble-age"></div>
-      <!-- Text layer — position/width set by JS via computeSafeTextArea -->
-      <div id="text-layer">
-        <div id="carved-text"><span id="cursor"></span></div>
-      </div>
+    <div id="anxiety-meter">
+      <span class="anxiety-label">anxiety:</span>
+      <span class="anxiety-bar"><span class="anxiety-filled"></span><span class="anxiety-empty"></span></span>
     </div>
-    <div id="slab-stroke"></div>
-    <!-- Edge moss overlay — outside slab clip-path so it can extend beyond edges -->
-    <div class="marble-moss"></div>
+    <div id="slab-wrap">
+      <div id="slab">
+        <!-- Layer 1: Marble base gradient (#FCFAF8 → #F4F3F1) -->
+        <div class="marble-base"><img src="assets/marble/base.svg" alt=""></div>
+        <!-- Layer 2: Directional volume / lighting — rotated 60°, y-flipped, screen blend -->
+        <div class="marble-volume"><img src="assets/marble/volume.svg" alt=""></div>
+        <!-- Layer 2b: Surface lighting — feDiffuseLighting + feSpecularLighting on turbulence bump map -->
+        <div class="marble-light"></div>
+        <!-- Layer 2e: Chip edge stroke — same transform as volume, strokes the mask boundary -->
+        <div class="marble-chip-edge"></div>
+        <!-- Layer 3: Surface cracks — rotated −60°, normal blend -->
+        <div class="marble-cracks"><img src="assets/marble/cracks.svg" alt=""></div>
+        <!-- Crack overlay — backspace damage cracks rendered here -->
+        <div id="crack-overlay"></div>
+        <!-- Layer 4–5: Organic veins — position/rotation set by JS, multiply blend -->
+        <div class="vein-wrap" id="vein-a"><img src="assets/marble/vein-a.svg" alt=""></div>
+        <div class="vein-wrap" id="vein-b"><img src="assets/marble/vein-b.svg" alt=""></div>
+        <!-- Directional light hint — very subtle upper-left to lower-right gradient -->
+        <div class="marble-directional"></div>
+        <!-- Age darkening — 'color' blend preserves luminosity (volume/depth) -->
+        <div class="marble-age"></div>
+        <!-- Text layer — position/width set by JS via computeSafeTextArea -->
+        <div id="text-layer">
+          <div id="carved-text"><span id="cursor"></span></div>
+        </div>
+      </div>
+      <div id="slab-stroke"></div>
+      <!-- Edge moss overlay — outside slab clip-path so it can extend beyond edges -->
+      <div class="marble-moss"></div>
+    </div>
     <div id="controls">
       <button id="btn-destroy">[start again]</button>
       <button id="btn-eternalize">[share]</button>
