@@ -38,6 +38,8 @@ let crackSpines     = [];  // just the edge-to-edge spines (for fracture)
 const MAX_CRACKS    = 4;
 let ageLevel        = 0;   // 0 (fresh) to 1 (fully aged)
 let lastTypeTime    = 0;   // timestamp of last keystroke
+let slabsDestroyed  = 0;   // how many slabs destroyed before share
+let firstCharTime   = 0;   // timestamp of first character on current slab
 // ageParams imported from aging.js (shared with sidebar)
 
 // lightParams imported from light.js (shared with sidebar)
@@ -526,6 +528,7 @@ function onKeyDown(e) {
   if (!LATIN_RE.test(e.key)) return;        // block non-Latin
   e.preventDefault();
   lastTypeTime = Date.now();
+  if (!firstCharTime) firstCharTime = lastTypeTime;
   if (charCount + keyQueue.length >= MAX_CHARS) return;
 
   ensureAudio();
@@ -574,6 +577,7 @@ function initMobileInput() {
     if (e.inputType === 'insertText' && e.data) {
       e.preventDefault();
       lastTypeTime = Date.now();
+      if (!firstCharTime) firstCharTime = lastTypeTime;
 
       for (const ch of e.data) {
         if (!LATIN_RE.test(ch)) continue;    // block non-Latin
@@ -595,6 +599,7 @@ function initMobileInput() {
       // Characters added
       const added = mobileInput.value.slice(lastLen);
       lastTypeTime = Date.now();
+      if (!firstCharTime) firstCharTime = lastTypeTime;
       for (const ch of added) {
         if (!LATIN_RE.test(ch)) continue;    // block non-Latin
         if (charCount + keyQueue.length >= MAX_CHARS) break;
@@ -1116,6 +1121,8 @@ function destroySlab() {
     crackOv.style.opacity = '1';
     charCount  = 0;
     crackCount = 0;
+    slabsDestroyed++;
+    firstCharTime = 0;
     applyFontSize(BASE_FONT);
     existingCracks = [];
     crackSpines = [];
@@ -1416,10 +1423,10 @@ async function eternalize() {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, W, H);
 
-  // Scale slab to fit, centered (ignoring sx/sy stretch for clean export)
-  const scale = (H * 0.78) / Math.max(sw, sh);
+  // Scale slab to fit, shifted up to leave room for metadata
+  const scale = (H * 0.74) / Math.max(sw, sh);
   const dw = sw * scale, dh = sh * scale;
-  const dx = (W - dw) / 2, dy = (H - dh) / 2;
+  const dx = (W - dw) / 2, dy = (H - dh) / 2 - 24;
 
   // All drawing is in slab-local coordinates via ctx.scale
   ctx.save();
@@ -1570,6 +1577,37 @@ async function eternalize() {
   ctx.lineWidth = 1;
   ctx.stroke(new Path2D(currentSlab.path));
   ctx.restore();
+
+  // 7. Metadata — Fragment Mono, 16px, #9b9a87, uppercase
+  {
+    const metaY = H - 18;
+    const metaSize = 16;
+    ctx.save();
+    ctx.font = `${metaSize}px 'Fragment Mono', monospace`;
+    ctx.fillStyle = '#9b9a87';
+    ctx.textBaseline = 'alphabetic';
+    try { ctx.letterSpacing = '0.96px'; } catch(e) {}
+
+    // Left: WPM / slabs
+    const textEl2 = document.getElementById('carved-text');
+    const rawText = textEl2?.innerText.replace(/\n/g, ' ').trim() || '';
+    const wordCount = rawText.split(/[\s\u00A0]+/).filter(w => w.length > 0).length;
+    const elapsed = firstCharTime ? (Date.now() - firstCharTime) / 60000 : 0; // minutes
+    const wpm = elapsed > 0.05 ? Math.round(wordCount / elapsed) : 0;
+    const slabLabel = slabsDestroyed === 1 ? 'SLAB' : 'SLABS';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${wpm} WPM / ${slabsDestroyed} ${slabLabel}`, 30, metaY);
+
+    // Right: date / time
+    const now = new Date();
+    const months = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE',
+                    'JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+    const dateStr = `${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()} / ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    ctx.textAlign = 'right';
+    ctx.fillText(dateStr, W - 30, metaY);
+
+    ctx.restore();
+  }
 
   const link = document.createElement('a');
   link.download = 'chisel.png';
