@@ -95,6 +95,10 @@ const GROUPS = [
   },
 ];
 
+// Standalone section for intro reset (not a param group)
+let introResetCallback = null;
+export function setIntroResetCallback(cb) { introResetCallback = cb; }
+
 export function initSidebar() {
   const nav = document.getElementById('sidebar');
   if (!nav) return;
@@ -166,6 +170,17 @@ export function initSidebar() {
       </div>`;
   }
 
+  // Intro reset section
+  bodyHtml += `
+    <div class="sb-group">
+      <div class="sb-group-header">Intro</div>
+      <div class="sb-group-body">
+        <div class="sb-actions">
+          <button id="sb-reset-intro">Reset Intro</button>
+        </div>
+      </div>
+    </div>`;
+
   nav.innerHTML = `
     <div class="sb-header">
       <span>Tuning</span>
@@ -214,6 +229,12 @@ export function initSidebar() {
       header.parentElement.classList.toggle('open');
     });
   }
+
+  // Intro reset button
+  document.getElementById('sb-reset-intro').addEventListener('click', () => {
+    localStorage.removeItem('chisel-intro-seen');
+    if (introResetCallback) introResetCallback();
+  });
 
   // Toggle sidebar with Ctrl+O / Cmd+O
   document.addEventListener('keydown', (e) => {

@@ -1,7 +1,7 @@
 import { SLABS } from './slabs.js';
 import { initParticles, resizeParticles, emitChiselDust, emitCrumble, emitFractureDust, clearParticles } from './particles.js';
 import { initCloud, triggerCrumbleCloud, triggerRevealCloud } from './cloud.js';
-import { initSidebar } from './sidebar.js';
+import { initSidebar, setIntroResetCallback } from './sidebar.js';
 import { lightParams, setUpdateLighting } from './light.js';
 import { ageParams } from './aging.js';
 
@@ -45,6 +45,103 @@ let totalKeystrokes = 0;   // total keystrokes across all slabs (for WPM)
 
 // lightParams imported from light.js (shared with sidebar)
 
+// ── Intro sequence ────────────────────────────────────────────────────────────
+
+let introPlaying = false;
+
+async function playIntro() {
+  introPlaying = true;
+  const controls = document.getElementById('controls');
+  controls.style.opacity = '0';
+  controls.style.pointerEvents = 'none';
+
+  const CHAR_DELAY = 210; // ms between characters
+  const PAUSE      = 1800; // ms pause after a completed line
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // Wait for user interaction so AudioContext can play
+  await new Promise(resolve => {
+    function onGesture() {
+      document.removeEventListener('click', onGesture);
+      document.removeEventListener('touchstart', onGesture);
+      document.removeEventListener('keydown', onGesture);
+      ensureAudio();
+      resolve();
+    }
+    document.addEventListener('click', onGesture, { once: true });
+    document.addEventListener('touchstart', onGesture, { once: true });
+    document.addEventListener('keydown', onGesture, { once: true });
+  });
+
+  // Wait for destroying flag to clear (slab rebuild done)
+  function waitReady() {
+    return new Promise(resolve => {
+      (function check() { destroying ? setTimeout(check, 100) : resolve(); })();
+    });
+  }
+
+  // Auto-type a string character by character
+  async function autoType(text) {
+    ensureAudio();
+    for (const ch of text) {
+      if (ch === ' ') {
+        playSkip();
+        carveCharacter('\u00A0');
+      } else {
+        playChisel();
+        carveCharacter(ch);
+      }
+      await sleep(CHAR_DELAY);
+    }
+  }
+
+  // Act 1
+  await sleep(800); // initial pause
+  await autoType('STONE DOES NOT FORGET');
+  await sleep(PAUSE);
+
+  // Crack to demonstrate backspace
+  addCrack();
+  await sleep(600);
+
+  // Destroy slab 1
+  destroySlab();
+  await waitReady();
+  await sleep(600);
+
+  // Act 2
+  await autoType('NEITHER DOES IT FORGIVE');
+  await sleep(PAUSE);
+
+  // Destroy slab 2
+  destroySlab();
+  await waitReady();
+  await sleep(600);
+
+  // Act 3
+  await autoType('CHOOSE YOVR WORDS');
+  await sleep(PAUSE * 1.5);
+
+  // Destroy slab 3 — user gets a fresh one
+  destroySlab();
+  await waitReady();
+  await sleep(400);
+
+  // Reset session stats — intro doesn't count
+  slabsDestroyed  = 0;
+  sessionStart    = 0;
+  totalKeystrokes = 0;
+
+  // Show controls
+  controls.style.opacity = '';
+  controls.style.pointerEvents = '';
+  controls.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, easing: 'ease' });
+
+  introPlaying = false;
+  localStorage.setItem('chisel-intro-seen', '1');
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 function updateSceneZoom() {
@@ -75,6 +172,14 @@ function init() {
   initSidebar();
   startAgingLoop();
   initMobileInput();
+
+  // Play intro on first visit
+  if (!localStorage.getItem('chisel-intro-seen')) {
+    playIntro();
+  }
+
+  // Sidebar reset callback — reload to replay intro
+  setIntroResetCallback(() => location.reload());
 }
 
 // ── Aging system ─────────────────────────────────────────────────────────────
@@ -519,6 +624,7 @@ function romanize(ch) {
 }
 
 function onKeyDown(e) {
+  if (introPlaying) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'Backspace' || e.key === 'Delete') {
     e.preventDefault();
@@ -566,6 +672,7 @@ function initMobileInput() {
 
   // Handle text input from virtual keyboard
   mobileInput.addEventListener('beforeinput', (e) => {
+    if (introPlaying) { e.preventDefault(); return; }
     ensureAudio();
     if (e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
       e.preventDefault();
@@ -1149,10 +1256,17 @@ function destroySlab() {
       [{ opacity: 0 }, { opacity: 1 }],
       { duration: 1200, easing: 'ease-out', fill: 'forwards' },
     );
-    const fadeInCtrl = controls.animate(
-      [{ opacity: 0 }, { opacity: 1 }],
-      { duration: 1200, easing: 'ease-out', fill: 'forwards' },
-    );
+    // Don't fade controls back in during intro
+    if (!introPlaying) {
+      const fadeInCtrl = controls.animate(
+        [{ opacity: 0 }, { opacity: 1 }],
+        { duration: 1200, easing: 'ease-out', fill: 'forwards' },
+      );
+      fadeInCtrl.onfinish = () => {
+        controls.style.opacity = '1';
+        fadeInCtrl.cancel();
+      };
+    }
     fadeIn.onfinish = () => {
       slabEl.style.opacity = '1';
       fadeIn.cancel();
@@ -1161,10 +1275,6 @@ function destroySlab() {
     fadeInStroke.onfinish = () => {
       strokeEl.style.opacity = '1';
       fadeInStroke.cancel();
-    };
-    fadeInCtrl.onfinish = () => {
-      controls.style.opacity = '1';
-      fadeInCtrl.cancel();
     };
   }, FRACTURE_MS + 800); // extra time for staggered fragment falls
 }
@@ -1324,23 +1434,7 @@ function generateCrackPolygons(w, h) {
     return { spine, tStart, tEnd };
   });
 
-  // Collect all split points on the perimeter (crack endpoints)
-  // Each split point has a perimeter position and references its crack
-  const splits = [];
-  for (const ce of crackEndpoints) {
-    splits.push({ t: ce.tStart, crack: ce, isStart: true });
-    splits.push({ t: ce.tEnd,   crack: ce, isStart: false });
-  }
-  splits.sort((a, b) => a.t - b.t);
-
-  // Walk the perimeter, collecting boundary corners + crack traversals into polygons.
-  // Between consecutive same-side splits, the boundary arc + crack form a closed polygon.
-  // Simpler approach: use perpendicular side test. For each region between consecutive
-  // cracks (sorted by offset), build a polygon from the two cracks + boundary corners between them.
-
-  // For two consecutive crack lines, build a polygon:
-  // Walk crack A from start→end, then boundary corners from A.end to B.end,
-  // then crack B reversed (end→start), then boundary corners from B.start to A.start.
+  // Collect boundary corners between two perimeter positions (clockwise).
   function cornersBetween(t1, t2) {
     // Collect rectangle corners whose perimeter position is between t1 and t2 (clockwise)
     const result = [];
@@ -1362,47 +1456,32 @@ function generateCrackPolygons(w, h) {
     return result;
   }
 
+  // Build N+1 non-overlapping strips for N sorted cracks.
+  // Strip 0: region on one side of the first crack
+  // Strip i (1..N-1): region between crack[i-1] and crack[i]
+  // Strip N: region on the other side of the last crack
   const polys = [];
   const n = lines.length;
 
-  // First region: boundary from last crack's end → first crack's start + first crack reversed
+  // Strip 0: first crack reversed + boundary arc (start → end, the "outer" side)
   {
-    const first = crackEndpoints[0];
-    const last = crackEndpoints[n - 1];
-    const tFrom = last.spine[last.spine.length - 1];
-    const tTo = first.spine[0];
-    const tFromT = perimeterT(tFrom);
-    const tToT = perimeterT(tTo);
-    const betweenCorners = cornersBetween(tFromT, tToT);
-    polys.push([tFrom, ...betweenCorners, tTo, ...first.spine.slice().reverse(),
-      ...last.spine]);
+    const s = crackEndpoints[0];
+    polys.push([...s.spine.slice().reverse(), ...cornersBetween(s.tStart, s.tEnd)]);
   }
 
-  // Middle regions: between consecutive cracks
+  // Middle strips: between consecutive cracks
   for (let i = 0; i < n - 1; i++) {
     const a = crackEndpoints[i];
     const b = crackEndpoints[i + 1];
-    // From A.end → boundary corners → B.end, then B reversed, boundary corners, back to A.start
-    const tAend = perimeterT(a.spine[a.spine.length - 1]);
-    const tBstart = perimeterT(b.spine[0]);
-    const tBend = perimeterT(b.spine[b.spine.length - 1]);
-    const tAstart = perimeterT(a.spine[0]);
-
-    const corners1 = cornersBetween(tAend, tBend);
-    const corners2 = cornersBetween(tBstart, tAstart);
+    const corners1 = cornersBetween(a.tEnd, b.tEnd);
+    const corners2 = cornersBetween(b.tStart, a.tStart);
     polys.push([...a.spine, ...corners1, ...b.spine.slice().reverse(), ...corners2]);
   }
 
-  // Last region: from last crack end → boundary → first crack start + first crack + boundary back
-  // Already handled by "first region" above (it wraps around)
-
-  // If only 1 crack, we need a second polygon for the other side
-  if (n === 1) {
-    const spine = crackEndpoints[0].spine;
-    const tStart = perimeterT(spine[0]);
-    const tEnd = perimeterT(spine[spine.length - 1]);
-    const betweenCorners = cornersBetween(tEnd, tStart);
-    polys.push([...spine, ...betweenCorners]);
+  // Strip N: last crack forward + boundary arc (end → start, the "outer" side)
+  {
+    const s = crackEndpoints[n - 1];
+    polys.push([...s.spine, ...cornersBetween(s.tEnd, s.tStart)]);
   }
 
   return polys;
