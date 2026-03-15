@@ -166,8 +166,10 @@ function setupGL() {
 }
 
 function applyResize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
+  // Use visualViewport on mobile for correct sizing when keyboard is open
+  const vv = window.visualViewport;
+  canvas.width  = vv ? Math.round(vv.width)  : window.innerWidth;
+  canvas.height = vv ? Math.round(vv.height) : window.innerHeight;
   setupGL();
 }
 
@@ -177,6 +179,10 @@ export function initCloud() {
   if (!gl) return;
   applyResize();
   window.addEventListener('resize', () => { if (gl) applyResize(); });
+  // Also listen to visualViewport resize (fires on mobile keyboard open/close)
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => { if (gl) applyResize(); });
+  }
 }
 
 export function resizeCloud() {

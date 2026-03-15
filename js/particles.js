@@ -358,6 +358,12 @@ function renderParticles(glCtx, now) {
   const sh = slabRef ? slabRef.h : rect.height;
   const zoom = rect.width / sw;
 
+  // On mobile, getBoundingClientRect returns layout-viewport coords but the
+  // fixed-position canvas is in the visual viewport. Correct the offset.
+  const vv = window.visualViewport;
+  const vvOX = vv ? vv.offsetLeft : 0;
+  const vvOY = vv ? vv.offsetTop  : 0;
+
   // Update physics & build vertex data
   const data = new Float32Array(particles.length * FLOATS_PER);
   let alive = 0;
@@ -378,9 +384,9 @@ function renderParticles(glCtx, now) {
       continue;
     }
 
-    // Slab-local → viewport pixels
-    const vpx = rect.left + (p.x / sw) * rect.width;
-    const vpy = rect.top  + (p.y / sh) * rect.height;
+    // Slab-local → visual viewport pixels
+    const vpx = rect.left - vvOX + (p.x / sw) * rect.width;
+    const vpy = rect.top  - vvOY + (p.y / sh) * rect.height;
 
     const off = alive * FLOATS_PER;
     data[off + 0] = vpx;

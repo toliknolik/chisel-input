@@ -45,8 +45,11 @@ let lastTypeTime    = 0;   // timestamp of last keystroke
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 function updateSceneZoom() {
-  const scaleH = (window.innerHeight - 32) / (MAX_SLAB_H + 48);
-  const scaleW = (window.innerWidth  - 40) / MAX_SLAB_W;
+  const vv = window.visualViewport;
+  const vpW = vv ? vv.width  : window.innerWidth;
+  const vpH = vv ? vv.height : window.innerHeight;
+  const scaleH = (vpH - 32) / (MAX_SLAB_H + 48);
+  const scaleW = (vpW - 40) / MAX_SLAB_W;
   document.getElementById('scene').style.zoom = Math.min(1, scaleH, scaleW);
 }
 
@@ -56,6 +59,9 @@ function init() {
   initParticles();
   updateSceneZoom();
   window.addEventListener('resize', updateSceneZoom);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', updateSceneZoom);
+  }
   currentSlab = pickSlab();
   crackDirection = (20 + Math.random() * 50) * Math.PI / 180; // 20-70° from horizontal
   applySlabShape(currentSlab);
@@ -502,6 +508,13 @@ function ensureAudio() {
 
 // ── Typing ────────────────────────────────────────────────────────────────────
 
+// Only allow Latin letters, digits, and basic punctuation. U → V (Roman style).
+const LATIN_RE = /^[A-Za-z0-9 .,'!?;:\-()&]$/;
+function romanize(ch) {
+  const upper = ch.toUpperCase();
+  return upper === 'U' ? 'V' : upper;
+}
+
 function onKeyDown(e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -510,13 +523,14 @@ function onKeyDown(e) {
     return;
   }
   if (e.key.length > 1 && e.key !== ' ') return;
+  if (!LATIN_RE.test(e.key)) return;        // block non-Latin
   e.preventDefault();
   lastTypeTime = Date.now();
   if (charCount + keyQueue.length >= MAX_CHARS) return;
 
   ensureAudio();
 
-  keyQueue.push(e.key === ' ' ? '\u00A0' : e.key.toUpperCase());
+  keyQueue.push(e.key === ' ' ? '\u00A0' : romanize(e.key));
   processQueue();
 }
 
@@ -562,8 +576,9 @@ function initMobileInput() {
       lastTypeTime = Date.now();
 
       for (const ch of e.data) {
+        if (!LATIN_RE.test(ch)) continue;    // block non-Latin
         if (charCount + keyQueue.length >= MAX_CHARS) break;
-        keyQueue.push(ch === ' ' ? '\u00A0' : ch.toUpperCase());
+        keyQueue.push(ch === ' ' ? '\u00A0' : romanize(ch));
       }
       processQueue();
       // Re-seed
@@ -581,8 +596,9 @@ function initMobileInput() {
       const added = mobileInput.value.slice(lastLen);
       lastTypeTime = Date.now();
       for (const ch of added) {
+        if (!LATIN_RE.test(ch)) continue;    // block non-Latin
         if (charCount + keyQueue.length >= MAX_CHARS) break;
-        keyQueue.push(ch === ' ' ? '\u00A0' : ch.toUpperCase());
+        keyQueue.push(ch === ' ' ? '\u00A0' : romanize(ch));
       }
       processQueue();
     } else if (curLen < lastLen) {
@@ -1386,85 +1402,105 @@ function generateCrackPolygons(w, h) {
 // ── Eternalize → PNG export ───────────────────────────────────────────────────
 
 async function eternalize() {
-  const W = 1920, H = 1080;
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-
-  // Background
-  ctx.fillStyle = '#0d0c0a';
-  ctx.fillRect(0, 0, W, H);
+  const W = 1200, H = 628; // Twitter summary_large_image ratio
 
   const sw = currentSlab.w;
   const sh = currentSlab.h;
-  const sx = currentSlab.sx || 1;
-  const sy = currentSlab.sy || 1;
-  const scale = (H * 0.70) / Math.max(sw * sx, sh * sy);
-  const dw = sw * sx * scale, dh = sh * sy * scale;
+  const dpr = Math.max(window.devicePixelRatio || 1, 2); // at least 2x for sharp text
+  const canvas = document.createElement('canvas');
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr); // all coordinates stay in logical 1200×628 space
+
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  // Scale slab to fit, centered (ignoring sx/sy stretch for clean export)
+  const scale = (H * 0.78) / Math.max(sw, sh);
+  const dw = sw * scale, dh = sh * scale;
   const dx = (W - dw) / 2, dy = (H - dh) / 2;
 
-  // Clip to slab shape (with per-slab stretch)
+  // All drawing is in slab-local coordinates via ctx.scale
   ctx.save();
   ctx.translate(dx, dy);
-  ctx.scale(scale * sx, scale * sy);
+  ctx.scale(scale, scale);
   ctx.clip(new Path2D(currentSlab.path));
 
   // 1. Marble base
   const imgBase = document.querySelector('.marble-base img');
-  ctx.drawImage(imgBase, 0, 0, sw, sh);
+  if (imgBase) ctx.drawImage(imgBase, 0, 0, sw, sh);
 
-  // 2. Volume layer — rotated per-slab angle, y-flipped, normal blend.
-  //    Replicates the CSS chip with adaptive chipScale for the mask path.
+  // 2. Volume layer — rotated, y-flipped, clipped by chip mask
   const imgVol = document.querySelector('.marble-volume img');
-  const cx = currentSlab._bboxCx;
-  const cy = currentSlab._bboxCy;
-  const cs = currentSlab._chipScale;
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(currentSlab.volumeAngle * Math.PI / 180);
-  ctx.scale(1, -1);
-  ctx.globalAlpha = 1;
-  const volW = sw * VOL_SCALE, volH = sh * VOL_SCALE;
-  ctx.translate(-volW / 2, -volH / 2);
-  const cMaskX = volW / 2 - cx * cs;
-  const cMaskY = volH / 2 - cy * cs;
-  // Build a scaled chip clip path matching the CSS mask
-  const chipPath = new Path2D();
-  chipPath.addPath(new Path2D(currentSlab.path),
-    new DOMMatrix().translate(cMaskX, cMaskY).scale(cs, cs));
-  ctx.save();
-  ctx.clip(chipPath);
-  ctx.drawImage(imgVol, 0, 0, volW, volH);
-  ctx.restore();
-  // Chip edge stroke
-  ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.lineWidth   = 1.5;
-  ctx.stroke(chipPath);
-  ctx.restore();
-  ctx.restore();
+  if (imgVol) {
+    const vcx = currentSlab._bboxCx;
+    const vcy = currentSlab._bboxCy;
+    const cs = currentSlab._chipScale;
+    const volW = sw * VOL_SCALE, volH = sh * VOL_SCALE;
+    const maskX = volW / 2 - vcx * cs;
+    const maskY = volH / 2 - vcy * cs;
 
-  // 3. Cracks — rotated −60°
+    ctx.save();
+    ctx.translate(vcx, vcy);
+    ctx.rotate(currentSlab.volumeAngle * Math.PI / 180);
+    ctx.scale(1, -1);
+    ctx.translate(-volW / 2, -volH / 2);
+
+    // Clip to chip mask (slab path scaled by chipScale)
+    const chipPath = new Path2D();
+    chipPath.addPath(new Path2D(currentSlab.path),
+      new DOMMatrix().translate(maskX, maskY).scale(cs, cs));
+    ctx.clip(chipPath);
+    ctx.drawImage(imgVol, 0, 0, volW, volH);
+
+    // Chip edge stroke
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 0.7;
+    ctx.stroke(chipPath);
+    ctx.restore();
+  }
+
+  // 3. Cracks texture — rotated −60°
   const imgCracks = document.querySelector('.marble-cracks img');
-  ctx.save();
-  ctx.translate(sw / 2, sh / 2);
-  ctx.rotate(-60 * Math.PI / 180);
-  ctx.globalAlpha = 0.9;
-  const crW = sw * 2, crH = sh * 2;
-  ctx.drawImage(imgCracks, -crW / 2, -crH / 2, crW, crH);
-  ctx.restore();
+  if (imgCracks) {
+    ctx.save();
+    ctx.translate(sw / 2, sh / 2);
+    ctx.rotate(-60 * Math.PI / 180);
+    ctx.globalAlpha = 0.9;
+    const crW = sw * 2, crH = sh * 2;
+    ctx.drawImage(imgCracks, -crW / 2, -crH / 2, crW, crH);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
 
-  // 4–5. Veins
+  // 4. Crack overlay (backspace damage lines)
+  const crackOv = document.getElementById('crack-overlay');
+  if (crackOv && crackOv.children.length > 0) {
+    for (const svg of crackOv.querySelectorAll('svg')) {
+      const svgStr = new XMLSerializer().serializeToString(svg);
+      const svgBlob = new Blob([svgStr], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      await new Promise(r => { img.onload = r; img.onerror = r; img.src = url; });
+      ctx.drawImage(img, 0, 0, sw, sh);
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // 5. Veins — multiply blend
   for (const id of ['vein-a', 'vein-b']) {
     const wrap = document.getElementById(id);
-    const img  = wrap.querySelector('img');
+    const img = wrap?.querySelector('img');
+    if (!wrap || !img) continue;
     const l  = parseFloat(wrap.style.left)   || 0;
     const t  = parseFloat(wrap.style.top)    || 0;
     const vw = parseFloat(wrap.style.width)  || img.naturalWidth;
     const vh = parseFloat(wrap.style.height) || img.naturalHeight;
-    const op = parseFloat(window.getComputedStyle(wrap).opacity) || 1;
-    const tf = wrap.style.transform;
-    const ang  = extractRotation(tf);
+    const op = parseFloat(getComputedStyle(wrap).opacity) || 1;
+    const tf = wrap.style.transform || '';
+    const angMatch = tf.match(/rotate\(([^)]+)deg\)/);
+    const ang = angMatch ? parseFloat(angMatch[1]) : 0;
     const flipY = /scaleY\(-1\)/.test(tf);
 
     ctx.save();
@@ -1477,65 +1513,68 @@ async function eternalize() {
     ctx.restore();
   }
 
-  ctx.restore(); // end slab clip
+  // 6. Text — replicate CSS text-shadow carved effect
+  const textEl = document.getElementById('carved-text');
+  const text = textEl?.innerText.replace(/\n/g, ' ').trim();
+  if (text && currentSafe) {
+    const fontSize = currentFontSize;
+    ctx.font = `${fontSize}px 'Cinzel', serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    try { ctx.letterSpacing = `${(1.8 * fontSize / BASE_FONT).toFixed(1)}px`; } catch(e) {}
 
-  // Text
-  if (currentSafe) {
-    ctx.save();
-    ctx.translate(dx, dy);
-    ctx.scale(scale * sx, scale * sy);
-    ctx.clip(new Path2D(currentSlab.path));
+    // CSS uses symmetric padding: max(safeTop, safeBottom) for both sides.
+    // This centers text at (slab.w/2, slab.h/2), NOT at currentSafe.cx/cy.
+    const textCX = sw / 2;
+    const textCY = sh / 2;
 
-    const textEl = document.getElementById('carved-text');
-    const text   = textEl.innerText.replace(/\n/g, ' ').trim();
-    if (text) {
-      const fontSize = Math.round(currentFontSize * scale);
-      ctx.font         = `${fontSize}px 'Cinzel', serif`;
-      ctx.fillStyle    = '#d3d5cc';
-      ctx.textAlign    = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.letterSpacing = `${(1.8 * currentFontSize / BASE_FONT * scale).toFixed(1)}px`;
-      const maxWidth = currentSafe.w * scale;
-      const lineH    = fontSize * 1.25;
-      const lines    = wrapText(ctx, text.toUpperCase(), maxWidth);
-      const startY   = currentSafe.cy * scale - ((lines.length - 1) * lineH) / 2;
-      lines.forEach((line, i) => {
-        ctx.shadowColor   = 'rgba(0,0,0,0.12)';
-        ctx.shadowOffsetX = 1 * scale;
-        ctx.shadowOffsetY = 1 * scale;
-        ctx.shadowBlur    = 2 * scale;
-        ctx.fillText(line, currentSafe.cx * scale, startY + i * lineH);
-      });
+    const maxW = currentSafe.w;
+    const lineH = fontSize; // CSS line-height: 1
+    // Word-wrap
+    const words = text.toUpperCase().split(/[\s\u00A0]+/);
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxW && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
     }
+    if (line) lines.push(line);
+
+    const startY = textCY - ((lines.length - 1) * lineH) / 2;
+
+    // Replicate CSS: text-shadow: 0.5px -0.5px 0.2px #868582, -0.66px -0.5px 0 #F8F9F6;
+    // Use CSS drop-shadow filter — behaves identically to text-shadow and
+    // is not affected by canvas CTM scaling issues.
+    // Match CSS -webkit-font-smoothing: antialiased (thinner strokes on macOS)
+    ctx.save();
+    ctx.textRendering = 'geometricPrecision';
+    ctx.filter = 'drop-shadow(0.5px -0.5px 0.2px #868582) drop-shadow(-0.66px -0.5px 0px #F8F9F6)';
+    ctx.fillStyle = '#d3d5cc';
+    lines.forEach((ln, i) => ctx.fillText(ln, textCX, startY + i * lineH));
+    ctx.filter = 'none';
     ctx.restore();
   }
 
-  const link    = document.createElement('a');
+  ctx.restore(); // end slab clip + scale
+
+  // Slab outline stroke (outside the clip)
+  ctx.save();
+  ctx.translate(dx, dy);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = '#F8F8F6';
+  ctx.lineWidth = 1;
+  ctx.stroke(new Path2D(currentSlab.path));
+  ctx.restore();
+
+  const link = document.createElement('a');
   link.download = 'chisel.png';
-  link.href     = canvas.toDataURL('image/png');
+  link.href = canvas.toDataURL('image/png');
   link.click();
-}
-
-function wrapText(ctx, text, maxWidth) {
-  const words = text.split(' ');
-  const lines = [];
-  let   line  = '';
-  for (const word of words) {
-    const test = line ? line + ' ' + word : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = test;
-    }
-  }
-  if (line) lines.push(line);
-  return lines;
-}
-
-function extractRotation(transformStr) {
-  const m = transformStr && transformStr.match(/rotate\(([^)]+)deg\)/);
-  return m ? parseFloat(m[1]) : 0;
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
