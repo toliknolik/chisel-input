@@ -39,7 +39,8 @@ const MAX_CRACKS    = 4;
 let ageLevel        = 0;   // 0 (fresh) to 1 (fully aged)
 let lastTypeTime    = 0;   // timestamp of last keystroke
 let slabsDestroyed  = 0;   // how many slabs destroyed before share
-let firstCharTime   = 0;   // timestamp of first character on current slab
+let sessionStart    = 0;   // timestamp of first keystroke in entire session
+let totalKeystrokes = 0;   // total keystrokes across all slabs (for WPM)
 // ageParams imported from aging.js (shared with sidebar)
 
 // lightParams imported from light.js (shared with sidebar)
@@ -528,11 +529,11 @@ function onKeyDown(e) {
   if (!LATIN_RE.test(e.key)) return;        // block non-Latin
   e.preventDefault();
   lastTypeTime = Date.now();
-  if (!firstCharTime) firstCharTime = lastTypeTime;
+  if (!sessionStart) sessionStart = lastTypeTime;
   if (charCount + keyQueue.length >= MAX_CHARS) return;
 
   ensureAudio();
-
+  totalKeystrokes++;
   keyQueue.push(e.key === ' ' ? '\u00A0' : romanize(e.key));
   processQueue();
 }
@@ -577,11 +578,12 @@ function initMobileInput() {
     if (e.inputType === 'insertText' && e.data) {
       e.preventDefault();
       lastTypeTime = Date.now();
-      if (!firstCharTime) firstCharTime = lastTypeTime;
+      if (!sessionStart) sessionStart = lastTypeTime;
 
       for (const ch of e.data) {
         if (!LATIN_RE.test(ch)) continue;    // block non-Latin
         if (charCount + keyQueue.length >= MAX_CHARS) break;
+        totalKeystrokes++;
         keyQueue.push(ch === ' ' ? '\u00A0' : romanize(ch));
       }
       processQueue();
@@ -599,10 +601,11 @@ function initMobileInput() {
       // Characters added
       const added = mobileInput.value.slice(lastLen);
       lastTypeTime = Date.now();
-      if (!firstCharTime) firstCharTime = lastTypeTime;
+      if (!sessionStart) sessionStart = lastTypeTime;
       for (const ch of added) {
         if (!LATIN_RE.test(ch)) continue;    // block non-Latin
         if (charCount + keyQueue.length >= MAX_CHARS) break;
+        totalKeystrokes++;
         keyQueue.push(ch === ' ' ? '\u00A0' : romanize(ch));
       }
       processQueue();
@@ -1122,7 +1125,6 @@ function destroySlab() {
     charCount  = 0;
     crackCount = 0;
     slabsDestroyed++;
-    firstCharTime = 0;
     applyFontSize(BASE_FONT);
     existingCracks = [];
     crackSpines = [];
@@ -1588,12 +1590,10 @@ async function eternalize() {
     ctx.textBaseline = 'alphabetic';
     try { ctx.letterSpacing = '0.96px'; } catch(e) {}
 
-    // Left: WPM / slabs
-    const textEl2 = document.getElementById('carved-text');
-    const rawText = textEl2?.innerText.replace(/\n/g, ' ').trim() || '';
-    const wordCount = rawText.split(/[\s\u00A0]+/).filter(w => w.length > 0).length;
-    const elapsed = firstCharTime ? (Date.now() - firstCharTime) / 60000 : 0; // minutes
-    const wpm = elapsed > 0.05 ? Math.round(wordCount / elapsed) : 0;
+    // Left: WPM / slabs — whole session, 1 word = 5 keystrokes
+    const elapsed = sessionStart ? (Date.now() - sessionStart) / 60000 : 0; // minutes
+    const words = totalKeystrokes / 5;
+    const wpm = elapsed > 0.05 ? Math.round(words / elapsed) : 0;
     const slabLabel = slabsDestroyed === 1 ? 'SLAB' : 'SLABS';
     ctx.textAlign = 'left';
     ctx.fillText(`${wpm} WPM / ${slabsDestroyed} ${slabLabel}`, 30, metaY);
